@@ -1,0 +1,14 @@
+{
+  "name": "vaga-radar",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node --test",
+    "db:local": "wrangler d1 migrations apply vaga-radar --local",
+    "db:remote": "wrangler d1 migrations apply vaga-radar --remote",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "4.86.0" },
+  "engines": { "node": ">=22" }
+}
