@@ -66,7 +66,7 @@ Rotacionar `SESSION_SECRET` encerra todas as sessões existentes. Não reutilize
 
 ## Gratuidade e tamanho
 
-O projeto foi desenhado para uso individual nas cotas gratuitas de Workers e D1, com até oito fontes, 1.500 anúncios brutos por resposta e 150 anúncios elegíveis por fonte. Acima desses limites a coleta daquela fonte falha com diagnóstico, sem encerrar anúncios antigos. Não há dependência de pagamento, mas os limites e termos da plataforma podem mudar. Confira os limites atuais no painel antes de publicar; não ative upgrades automáticos.
+O projeto foi desenhado para uso individual nas cotas gratuitas de Workers e D1, com até oito fontes, 1.500 anúncios brutos por resposta Greenhouse e 500 por fonte Lever (com paginação) e 200 anúncios elegíveis por fonte. Acima desses limites a coleta daquela fonte falha com diagnóstico, sem encerrar anúncios antigos. Não há dependência de pagamento, mas os limites e termos da plataforma podem mudar. Confira os limites atuais no painel antes de publicar; não ative upgrades automáticos.
 
 Leitura oficial: https://developers.cloudflare.com/workers/platform/pricing/ e https://developers.cloudflare.com/d1/platform/limits/ . O desempenho e o consumo real de CPU do cron precisam ser medidos na conta gratuita; não foram validados em produção nesta sessão.
 
@@ -83,7 +83,7 @@ Uma fonte pausada não é consultada e suas vagas saem do radar. O limite de oit
 - Importação com respostas de teste: inserção, deduplicação, encerramento, preservação de favoritos e tratamento de erro HTTP.
 - Migrações aplicadas no D1 local, Worker iniciado com Wrangler e navegação real em Chromium desktop e celular.
 - Após liberar a rede, a coleta real em produção consultou Nubank, CloudWalk e Wellhub. A primeira coleta importou 23 vagas remotas no Brasil da Wellhub, com 2 aderentes aos filtros iniciais. As outras duas fontes responderam com zero vagas elegíveis.
-- Worker publicado, quatro migrações aplicadas no D1 e dois segredos de produção configurados. Página inicial, login, perfil e importação real foram verificados por HTTPS. O cron foi registrado e confirmado na API Cloudflare; a primeira execução automática ainda precisa ocorrer. O teste manual de coleta não comprova execução agendada nem consumo prolongado das cotas.
+- Worker publicado, seis migrações aplicadas no D1 e dois segredos de produção configurados. Página inicial, login, perfil e importação real foram verificados por HTTPS. O cron foi registrado e confirmado na API Cloudflare; a primeira execução automática ainda precisa ocorrer. O teste manual de coleta não comprova execução agendada nem consumo prolongado das cotas.
 
 ## Estrutura
 
@@ -94,3 +94,7 @@ O acervo `skills-bryan` permanece separado e sem alterações.
 ## Atualização da preparação de publicação
 
 Com a rede liberada, a API pública Greenhouse da Wellhub (`gympass`) respondeu com 88 anúncios, dos quais 23 passaram pelo filtro estrito de Brasil e remoto na consulta de preparação. Isso confirma a leitura e normalização da fonte naquele momento, não uma publicação do sistema nem a aderência das 23 vagas ao perfil. A migração `0004_verified_source.sql` adiciona essa fonte e pausa a sugestão `truelogic`, que retornou HTTP 404. O acesso Cloudflare foi concedido pelo segredo seguro `CLOUDFLARE_API_TOKEN`; criação do D1 e publicação foram concluídas. Valores de segredos e a senha de acesso não são versionados.
+
+## Filtros de stack e senioridade
+
+O perfil inclui tecnologias principais editáveis (Node.js/NestJS/React e aliases). Pelo menos uma precisa aparecer no anúncio. Com esse filtro ativo, títulos que mencionam Java, Angular, Python, Kotlin, Go/Golang, PHP ou Ruby ficam fora das recomendações quando a tecnologia não está nas habilidades cadastradas. Assim, uma vaga Java/Angular que cita Node.js apenas como diferencial não é tratada como adequada ao perfil inicial. Títulos de gestão, master, especialista e arquitetura também ficam fora com os níveis júnior/pleno. As vagas continuam consultáveis em Todas no radar; a heurística não substitui ler os requisitos.

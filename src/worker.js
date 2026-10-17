@@ -34,14 +34,29 @@ function cookie(request, value, maxAge) {
 export async function syncSource(env, source, fetcher = fetch) {
   const time = stamp();
   try {
-    const response = await fetcher(sourceURL(source), { headers: { accept: 'application/json', 'user-agent': 'VagaRadar-Personal/1.0' }, signal: AbortSignal.timeout(20000) });
-    if (!response.ok) throw new Error(`A fonte respondeu HTTP ${response.status}. Confira o identificador da empresa.`);
-    const data = await response.json();
-    const records = source.provider === 'lever' ? data : data.jobs;
+    const read = async url => {
+      const response = await fetcher(url, { headers: { accept: 'application/json', 'user-agent': 'VagaRadar-Personal/1.0' }, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error(`A fonte respondeu HTTP ${response.status}. Confira o identificador da empresa.`);
+      return response.json();
+    };
+    const data = await read(sourceURL(source));
+    let records = source.provider === 'lever' ? data : data.jobs;
     if (!Array.isArray(records)) throw new Error('Formato de resposta inesperado.');
+    if (source.provider === 'lever') {
+      if (records.length > 100) throw new Error('Formato de paginação inesperado na fonte Lever.');
+      let page = records;
+      while (page.length === 100) {
+        const url = new URL(sourceURL(source));
+        url.searchParams.set('skip', String(records.length));
+        page = await read(url.toString());
+        if (!Array.isArray(page) || page.length > 100) throw new Error('Formato de paginação inesperado na fonte Lever.');
+        records = records.concat(page);
+        if (records.length > 500) throw new Error('Fonte Lever excede 500 anúncios; coleta suspensa para proteger a cota gratuita.');
+      }
+    }
     if (records.length > 1500) throw new Error('Fonte excede o limite de 1.500 anúncios; escolha uma fonte menor.');
     const jobs = records.map(record => normalize(source.provider, record, source)).filter(job => eligibility(job).eligible);
-    if (jobs.length > 150) throw new Error('Fonte com mais de 150 vagas elegíveis. Coleta suspensa para proteger a cota gratuita.');
+    if (jobs.length > 200) throw new Error('Fonte com mais de 200 vagas elegíveis. Coleta suspensa para proteger a cota gratuita.');
     if (jobs.some(job => !job.title || !safeJobURL(job.url, source.provider) || job.id.endsWith(':undefined'))) throw new Error('A fonte retornou anúncio sem identificação ou link oficial reconhecido.');
     const statements = jobs.map(job => env.DB.prepare(`INSERT INTO jobs(id,source_id,title,company,location,description,url,workplace,published,first_seen,last_seen,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title,company=excluded.company,location=excluded.location,description=excluded.description,url=excluded.url,workplace=excluded.workplace,published=excluded.published,last_seen=excluded.last_seen,active=1`).bind(job.id, source.id, job.title, job.company, job.location, job.description, job.url, job.workplace, job.published, time, time));

@@ -1,0 +1,1 @@
+UPDATE settings SET profile=json_set(profile, '$.focusSkills', json('["Node.js","NodeJS","Node JS","NestJS","Nest.js","React","React.js","ReactJS"]')) WHERE id=1 AND json_extract(profile,'$.focusSkills') IS NULL;

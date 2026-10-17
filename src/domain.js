@@ -27,10 +27,12 @@ export function assess(job, profile) {
   const title = fold(job.title);
   const roleMatches = profile.roles.filter(term => has(title, term));
   const skillMatches = profile.skills.filter(term => has(text, term));
+  const focusMatches = (profile.focusSkills || []).filter(term => has(text, term));
+  const titleSkillGaps = (profile.focusSkills || []).length ? ['Java','Angular','Python','Kotlin','Golang','PHP','Ruby','Go'].filter(term => has(title, term) && !profile.skills.some(skill => fold(skill) === fold(term))) : [];
   const excluded = profile.exclude.filter(term => has(text, term));
   const levelMatches = profile.levels.filter(term => has(text, term));
-  const seniorTitle = /\b(senior|sr|staff|principal|lead|lider|sênior)\b/.test(title);
-  const seniorAllowed = profile.levels.some(term => /senior|sênior|staff|principal|lead|lider|^sr$/i.test(term));
+  const seniorTitle = /\b(senior|sr|staff|principal|lead|lider|manager|head|director|diretor|diretora|gerente|coordenador|coordenadora|supervisor|supervisora|master|expert|especialista|architect|arquiteto)\b/.test(title);
+  const seniorAllowed = profile.levels.some(term => /senior|sênior|staff|principal|lead|lider|manager|head|director|diretor|gerente|coordenador|supervisor|master|expert|especialista|architect|arquiteto|^sr$/i.test(term));
   const levelConflict = profile.levels.length > 0 && seniorTitle && !seniorAllowed;
   const kinds = contracts(job);
   const contractMatch = !kinds.length || kinds.some(kind => profile.contracts.includes(kind));
@@ -40,9 +42,9 @@ export function assess(job, profile) {
   const levelWeight = profile.levels.length ? 10 : 0;
   const denominator = roleWeight + skillWeight + levelWeight;
   const score = !configured ? null : Math.round(100 * ((roleMatches.length ? roleWeight : 0) + (profile.skills.length ? skillWeight * skillMatches.length / profile.skills.length : 0) + (levelMatches.length ? levelWeight : 0)) / denominator);
-  return { ...job, kinds, score, roleMatches, skillMatches, excluded, levelMatches, contractMatch,
+  return { ...job, kinds, score, roleMatches, skillMatches, focusMatches, titleSkillGaps, excluded, levelMatches, contractMatch,
     levelConflict,
-    compatible: configured && (!profile.roles.length || roleMatches.length > 0) && (!profile.skills.length || skillMatches.length > 0) && !levelConflict && excluded.length === 0 && contractMatch,
+    compatible: configured && titleSkillGaps.length === 0 && (!(profile.focusSkills || []).length || focusMatches.length > 0) && (!profile.roles.length || roleMatches.length > 0) && (!profile.skills.length || skillMatches.length > 0) && !levelConflict && excluded.length === 0 && contractMatch,
     salaryNote: profile.minSalary ? 'Salário mínimo não verificado: confira valor, moeda e período no anúncio.' : null,
     eligibility: eligibility(job) };
 }
@@ -51,6 +53,10 @@ export function validateProfile(value) {
   for (const field of ['roles','skills','exclude','levels','contracts']) {
     if (!Array.isArray(value[field]) || value[field].length > 30 || value[field].some(x => typeof x !== 'string' || !x.trim() || x.length > 80)) throw new Error('Perfil inválido: use listas com até 30 termos de até 80 caracteres.');
     result[field] = [...new Set(value[field].map(x => x.trim()))];
+  }
+  if (value.focusSkills !== undefined) {
+    if (!Array.isArray(value.focusSkills) || value.focusSkills.length > 30 || value.focusSkills.some(x => typeof x !== 'string' || !x.trim() || x.length > 80)) throw new Error('Perfil inválido: tecnologias principais inválidas.');
+    result.focusSkills = [...new Set(value.focusSkills.map(x => x.trim()))];
   }
   if (!result.contracts.length || result.contracts.some(x => !['CLT','PJ','Estágio'].includes(x))) throw new Error('Selecione CLT, PJ ou Estágio.');
   result.minSalary = Number(value.minSalary || 0);
@@ -74,7 +80,7 @@ export function normalize(provider, raw, source) {
 }
 export function sourceURL(source) {
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(source.slug)) throw new Error('Identificador de fonte inválido.');
-  if (source.provider === 'lever') return `https://api.lever.co/v0/postings/${source.slug}?mode=json`;
+  if (source.provider === 'lever') return `https://api.lever.co/v0/postings/${source.slug}?mode=json&limit=100&skip=0`;
   if (source.provider === 'greenhouse') return `https://boards-api.greenhouse.io/v1/boards/${source.slug}/jobs?content=true`;
   throw new Error('Provedor não permitido.');
 }

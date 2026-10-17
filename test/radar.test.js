@@ -10,7 +10,7 @@ const base = { id:'test', title:'Full-stack Developer Pleno', company:'Empresa t
 const source = { id:2, provider:'lever', slug:'cloudwalk', company:'CloudWalk' };
 function database() {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql','0002_bryan_profile.sql','0003_sync_lock.sql','0004_verified_source.sql']) sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url),'utf8'));
+  for (const file of ['0001_init.sql','0002_bryan_profile.sql','0003_sync_lock.sql','0004_verified_source.sql','0005_ciandt.sql','0006_focus_stack.sql']) sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url),'utf8'));
   const wrapper = {
     prepare(sql) {
       let args = [];
@@ -47,10 +47,18 @@ test('scoring is explainable and does not confuse Java and JavaScript', () => {
 });
 test('senior roles, excluded terms and wrong contracts do not pass profile', () => {
   assert.equal(assess({...base,title:'Senior Full-stack Developer'},profile).compatible,false);
+  assert.equal(assess({...base,title:'Backend Software Engineering Manager'}, {...profile,roles:['backend']}).compatible,false);
+  assert.equal(assess({...base,title:'Master Full-stack Developer'},profile).compatible,false);
   assert.equal(assess(base,{...profile,exclude:['React']}).compatible,false);
   assert.equal(assess(base,{...profile,contracts:['PJ']}).compatible,false);
   assert.equal(assess({...base,description:'React and Node.js'},profile).compatible,true);
   assert.deepEqual(contracts({...base,description:'Full-time React'}),[]);
+});
+test('main stack gate rejects Java/Angular roles matching shared infrastructure only', () => {
+  const focused={...profile,skills:['React','AWS'],focusSkills:['React','Node.js']};
+  assert.equal(assess({...base,description:'Java, Angular and AWS'},focused).compatible,false);
+  assert.equal(assess({...base,description:'React and AWS'},focused).compatible,true);
+  assert.equal(assess({...base,title:'Mid-level Java Angular Developer',description:'Java and Angular. Node.js is a plus. AWS.'},focused).compatible,false);
 });
 test('no fabricated score for empty profile; salary remains explicitly unverified', () => {
   assert.equal(assess(base,{...profile,roles:[],skills:[]}).score,null);
@@ -118,6 +126,18 @@ test('failed fetch does not mark existing jobs closed; failure is exposed', asyn
   assert.equal(result.ok,false);
   assert.equal((await environment.DB.prepare('SELECT active FROM jobs').first()).active,1);
   assert.match((await environment.DB.prepare('SELECT error FROM sources WHERE id=2').first()).error,/429/);
+});
+test('Lever pagination imports all pages before determining closed postings', async () => {
+  const environment = env();
+  const calls=[];
+  const result=await syncSource(environment,source,async url => {
+    const skip=Number(new URL(url).searchParams.get('skip'));
+    calls.push(skip);
+    return Response.json(skip===0 ? Array.from({length:100},(_,i)=>lever(String(i))) : [lever('last')]);
+  });
+  assert.equal(result.ok,true);
+  assert.equal(result.count,101);
+  assert.deepEqual(calls,[0,100]);
 });
 test('unsafe links abort import and saved state accepts existing jobs only', async () => {
   const environment = env();
