@@ -1,11 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaga-radar",
+  "account_id": "2b5bbfc46930b47fcce0840cd69e3617",
   "main": "src/worker.js",
   "compatibility_date": "2026-05-01",
   "workers_dev": true,
   "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": true },
   "triggers": { "crons": ["17 */2 * * *"] },
-  "d1_databases": [{ "binding": "DB", "database_name": "vaga-radar", "database_id": "PREENCHER_APOS_CRIAR_D1", "migrations_dir": "migrations" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "vaga-radar", "database_id": "2a1660d2-da9c-4e7a-b2fe-7c8596c47983", "migrations_dir": "migrations" }],
   "observability": { "enabled": false }
 }

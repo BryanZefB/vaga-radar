@@ -1,5 +1,7 @@
 # Vaga Radar
 
+**Produção:** https://vaga-radar.bryanzef7.workers.dev — acesso pessoal por senha. Worker, D1, segredos e agendamento já foram configurados. Não é necessário repetir os passos de criação abaixo para esta conta.
+
 Aplicação web pessoal para Bryan acompanhar oportunidades remotas no Brasil. Frontend em português, Worker com API privada, SQLite/D1, coleta programada, perfil editável, favoritos e acompanhamento manual de candidaturas.
 
 ## O que está implementado
@@ -8,7 +10,7 @@ Aplicação web pessoal para Bryan acompanhar oportunidades remotas no Brasil. F
 - CLT, PJ e estágio. `Full-time` não é convertido automaticamente em CLT.
 - Pontuação explicada por cargo, tecnologias e nível. Títulos sênior/lead/staff ficam fora das recomendações iniciais.
 - Localização Brasil e remoto explícitos. Híbrido, presencial e LATAM/worldwide sem Brasil ficam fora. Isso reduz falsos positivos, mas perde anúncios com localização incompleta.
-- APIs públicas de páginas de carreira Lever e Greenhouse. Os três identificadores iniciais são sugestões ainda não confirmadas com coleta real.
+- APIs públicas de páginas de carreira Lever e Greenhouse. As fontes sugeridas foram consultadas; Wellhub (`gympass`) retornou vagas elegíveis. A fonte `truelogic`, indisponível, fica pausada.
 - Coleta a cada duas horas. Botão de atualização respeita intervalo de 110 minutos por fonte após sucesso.
 - Deduplicação por provedor, empresa e identificador original; preservação da primeira descoberta; encerramento de anúncios removidos da fonte após coleta completa bem-sucedida.
 - Fonte sem coleta nas últimas seis horas ou com erro deixa de alimentar o radar até uma coleta bem-sucedida. Favoritos continuam disponíveis com aviso.
@@ -46,9 +48,9 @@ Depois execute `npm run dev`. O terminal informa a porta local. Nenhuma conta Cl
 
 Em ambientes com diretório pessoal somente leitura, use um cache gravável (`npm ci --cache /tmp/vaga-radar-npm-cache`) e `XDG_CONFIG_HOME=/tmp/vaga-radar-config WRANGLER_SEND_METRICS=false` antes dos comandos Wrangler.
 
-## Publicar sem comprar domínio
+## Recriar a publicação em outra conta, sem comprar domínio
 
-O produto é acessado inteiramente no navegador após publicado. Os comandos abaixo também podem ser executados em um terminal cloud, sem instalar ferramentas no seu computador.
+A publicação atual já está pronta. Os passos desta seção são referência para uma nova conta: ajuste também `account_id` em `wrangler.jsonc`. O produto é acessado inteiramente no navegador após publicado. Os comandos abaixo também podem ser executados em um terminal cloud, sem instalar ferramentas no seu computador.
 
 1. Crie uma conta em https://dash.cloudflare.com/sign-up e mantenha **Workers Free**. Não contrate Workers Paid nem serviços pagos para esse projeto.
 2. No terminal do projeto, execute `npx wrangler login` e conclua o fluxo oficial no navegador. Nunca compartilhe senha ou token pelo chat.
@@ -80,8 +82,8 @@ Uma fonte pausada não é consultada e suas vagas saem do radar. O limite de oit
 - API privada: autenticação, assinatura de sessão, origem, limite de login, edição de perfil, favoritos.
 - Importação com respostas de teste: inserção, deduplicação, encerramento, preservação de favoritos e tratamento de erro HTTP.
 - Migrações aplicadas no D1 local, Worker iniciado com Wrangler e navegação real em Chromium desktop e celular.
-- A coleta externa real ficou bloqueada por HTTP 403 do proxy de saída deste ambiente para `api.lever.co` e `boards-api.greenhouse.io`. Os testes de conector são simulados; não comprovam que os três boards iniciais existem ou têm vagas adequadas hoje.
-- Não publicado: falta conta/autenticação Cloudflare, criação do D1 e segredos de produção. Não há validação de cron ou das cotas em produção.
+- Após liberar a rede, a coleta real em produção consultou Nubank, CloudWalk e Wellhub. A primeira coleta importou 23 vagas remotas no Brasil da Wellhub, com 2 aderentes aos filtros iniciais. As outras duas fontes responderam com zero vagas elegíveis.
+- Worker publicado, quatro migrações aplicadas no D1 e dois segredos de produção configurados. Página inicial, login, perfil e importação real foram verificados por HTTPS. O cron foi registrado e confirmado na API Cloudflare; a primeira execução automática ainda precisa ocorrer. O teste manual de coleta não comprova execução agendada nem consumo prolongado das cotas.
 
 ## Estrutura
 
@@ -91,4 +93,4 @@ O acervo `skills-bryan` permanece separado e sem alterações.
 
 ## Atualização da preparação de publicação
 
-Com a rede liberada, a API pública Greenhouse da Wellhub (`gympass`) respondeu com 88 anúncios, dos quais 23 passaram pelo filtro estrito de Brasil e remoto na consulta de preparação. Isso confirma a leitura e normalização da fonte naquele momento, não uma publicação do sistema nem a aderência das 23 vagas ao perfil. A migração `0004_verified_source.sql` adiciona essa fonte e pausa a sugestão `truelogic`, que retornou HTTP 404. O acesso Cloudflare ainda precisa ser concedido pelo segredo seguro `CLOUDFLARE_API_TOKEN` para criar o D1 e publicar.
+Com a rede liberada, a API pública Greenhouse da Wellhub (`gympass`) respondeu com 88 anúncios, dos quais 23 passaram pelo filtro estrito de Brasil e remoto na consulta de preparação. Isso confirma a leitura e normalização da fonte naquele momento, não uma publicação do sistema nem a aderência das 23 vagas ao perfil. A migração `0004_verified_source.sql` adiciona essa fonte e pausa a sugestão `truelogic`, que retornou HTTP 404. O acesso Cloudflare foi concedido pelo segredo seguro `CLOUDFLARE_API_TOKEN`; criação do D1 e publicação foram concluídas. Valores de segredos e a senha de acesso não são versionados.
