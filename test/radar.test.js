@@ -89,12 +89,13 @@ test('private login, tampered cookie, profile persistence and logout', async () 
   const environment = env(); const cookie = await login(environment);
   const result = await worker.fetch(request('profile','GET',undefined,cookie),environment);
   assert.equal(result.status,200);
-  assert.equal((await result.json()).skills.includes('TypeScript'),true);
+  const existingProfile=await result.json();
+  assert.equal(existingProfile.skills.includes('TypeScript'),true);
   assert.equal((await worker.fetch(request('profile','GET',undefined,cookie+'invalid'),environment)).status,401);
   const update = await worker.fetch(request('profile','PUT',profile,cookie),environment);
   assert.equal(update.status,200);
   const read = await worker.fetch(request('profile','GET',undefined,cookie),environment);
-  assert.deepEqual(await read.json(),profile);
+  assert.deepEqual(await read.json(),{...profile,focusSkills:existingProfile.focusSkills,experienceYears:existingProfile.experienceYears});
   const logout = await worker.fetch(request('logout','POST',{},cookie),environment);
   assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
 });

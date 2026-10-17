@@ -4,6 +4,10 @@ import { linkedInCards, indeedCards, linkedInDetail, indeedDetail, discoveryQuer
 const encoder = new TextEncoder();
 const json = (value, status = 200, extra = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
 const stamp = () => new Date().toISOString();
+async function readProfile(env){
+  const profile=JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
+  return {...profile,experienceYears:profile.experienceYears??2};
+}
 const hex = bytes => [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('');
 async function sign(value, secret) {
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -42,13 +46,13 @@ export async function syncSource(env, source, fetcher = fetch) {
       if(response.status===429) throw new Error('Fonte limitou as consultas (HTTP 429). Aguarde a próxima rodada.');
       if (!response.ok) throw new Error(`A fonte respondeu HTTP ${response.status}. Confira o identificador da empresa.`);
       const text=await response.text();
-      if(text.length>3000000) throw new Error('Fonte excedeu o limite de tamanho seguro.');
+      if(text.length>(!html&&source.provider==='greenhouse'?4000000:3000000)) throw new Error('Fonte excedeu o limite de tamanho seguro.');
       return html?text:JSON.parse(text);
     };
     const publicBoard=['linkedin','indeed'].includes(source.provider);
     let records, warning=null;
     if(publicBoard){
-      const profile=JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
+      const profile=await readProfile(env);
       const html=await read(publicSearchURL(source.provider,discoveryQuery(profile)),true);
       const cards=(source.provider==='linkedin'?linkedInCards:indeedCards)(html);
       if(!cards.length && !/no results|nenhum resultado|nao encontramos|no matching jobs|we couldn.t find/i.test(html)) throw new Error('Formato público indisponível ou acesso limitado. Abra a busca externa para consultar diretamente.');
@@ -81,7 +85,7 @@ export async function syncSource(env, source, fetcher = fetch) {
       }
     }
     if (records.length > 1500) throw new Error('Fonte excede o limite de 1.500 anúncios; escolha uma fonte menor.');
-    const jobs = records.map(record => normalize(source.provider, record, source)).filter(job => eligibility(job).eligible);
+    const jobs = records.filter(record=>plausibleRecord(record)).map(record => normalize(source.provider, record, source)).filter(job => eligibility(job).eligible);
     if (jobs.length > 200) throw new Error('Fonte com mais de 200 vagas elegíveis. Coleta suspensa para proteger a cota gratuita.');
     if (jobs.some(job => !job.title || !safeJobURL(job.url, source.provider) || job.id.endsWith(':undefined'))) throw new Error('A fonte retornou anúncio sem identificação ou link oficial reconhecido.');
     const statements = jobs.map(job => jobStatement(env,job,time));
@@ -99,6 +103,12 @@ export async function syncSource(env, source, fetcher = fetch) {
   }
 }
 const plainPublic=value=>String(value).replace(/<[^>]*>/g,' ');
+function plausibleRecord(raw){
+  const facts=eligibility({title:raw.title||raw.text||'',location:typeof raw.location==='string'?raw.location:raw.location?.name||raw.categories?.location||'',country:raw.country,workplace:raw.workplace||raw.workplaceType||'',description:''});
+  if(facts.remote&&facts.brazil)return true;
+  const text=[raw.content,raw.description,raw.descriptionPlain,raw.additional,raw.additionalPlain,JSON.stringify(raw.lists||[])].filter(Boolean).join(' ');
+  return (facts.remote||/remot|home office|anywhere|telecommute/i.test(text))&&(facts.brazil||/resid|contrata/i.test(text));
+}
 function jobStatement(env,job,time){
   return env.DB.prepare(`INSERT INTO jobs(id,source_id,title,company,location,description,url,workplace,published,first_seen,last_seen,active,details,check_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,'listed')
     ON CONFLICT(id) DO UPDATE SET title=excluded.title,company=excluded.company,location=excluded.location,description=excluded.description,url=excluded.url,workplace=excluded.workplace,published=excluded.published,last_seen=excluded.last_seen,active=1,details=excluded.details,check_status='listed'`).bind(job.id,job.source_id,job.title,job.company,job.location,job.description,job.url,job.workplace,job.published||null,time,time,JSON.stringify(job.details||{}));
@@ -173,11 +183,12 @@ async function api(request, env, ctx) {
   }
   if (!await authenticated(request, env)) return json({ error: 'Entre com sua senha para continuar.' }, 401);
   if (path === '/api/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'set-cookie': cookie(request, '', 0) });
-  if (path === '/api/profile' && request.method === 'GET') return json(JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile));
+  if (path === '/api/profile' && request.method === 'GET') return json(await readProfile(env));
   if (path === '/api/profile' && request.method === 'PUT') {
-    const profile = validateProfile(await body(request));
+    const previous=await readProfile(env);
+    const profile = validateProfile({...previous,...await body(request)});
     await env.DB.prepare('UPDATE settings SET profile=? WHERE id=1').bind(JSON.stringify(profile)).run();
-    await env.DB.prepare("UPDATE sources SET last_attempt=NULL WHERE provider IN ('linkedin','indeed')").run();
+    if(discoveryQuery(previous)!==discoveryQuery(profile))await env.DB.prepare("UPDATE sources SET last_attempt=NULL WHERE provider IN ('linkedin','indeed')").run();
     return json(profile);
   }
   if(path==='/api/verify' && request.method==='POST'){
@@ -187,12 +198,12 @@ async function api(request, env, ctx) {
     return json(result,result.ok?200:502);
   }
   if (path === '/api/jobs' && request.method === 'GET') {
-    const profile = JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
+    const profile = await readProfile(env);
     const { results } = await env.DB.prepare('SELECT jobs.*,saved.status,sources.provider,sources.slug,sources.enabled AS source_enabled,sources.error AS source_error,sources.last_sync AS source_sync FROM jobs LEFT JOIN saved ON saved.job_id=jobs.id JOIN sources ON sources.id=jobs.source_id ORDER BY first_seen DESC LIMIT 3000').all();
     return json({ jobs: results.map(job => assess(job, profile)), limit: 3000 });
   }
   if (path === '/api/sources' && request.method === 'GET') {
-    const profile=JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
+    const profile=await readProfile(env);
     return json((await env.DB.prepare('SELECT * FROM sources ORDER BY id').all()).results.map(source=>({...source,searchUrl:source.provider==='linkedin'?publicSearchURL(source.provider,discoveryQuery(profile)).replace('/jobs-guest/jobs/api/seeMoreJobPostings/search','/jobs/search'):source.provider==='indeed'?publicSearchURL(source.provider,discoveryQuery(profile)):source.provider==='lever'?`https://jobs.lever.co/${source.slug}`:`https://job-boards.greenhouse.io/${source.slug}`})));
   }
   if (path === '/api/sources' && request.method === 'POST') {
