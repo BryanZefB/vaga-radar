@@ -26,7 +26,7 @@ async function load() {
   render(); renderSources();
 }
 function visibleJobs() { return state.jobs.filter(job => job.active && job.source_enabled && job.last_seen && Date.now()-Date.parse(job.last_seen)<6*3600000 && !job.source_error && job.eligibility.eligible && job.status !== 'hidden'); }
-const verificationLabel = job => ({confirmed:'Reconfirmada na fonte',listed:'Listada na fonte',unconfirmed:'Precisa reconfirmação',closed:'Encerrada na fonte',ineligible:'País/modalidade não confirmados'}[job.verification?.status]||'Precisa reconfirmação');
+const verificationLabel = job => ({confirmed:'Reconfirmada na fonte',listed:'Listada na fonte',unconfirmed:'Precisa reconfirmação',closed:'Encerrada ou indisponível na fonte',ineligible:'País/modalidade não confirmados'}[job.verification?.status]||'Precisa reconfirmação');
 function safeLink(value){ try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password;}catch{return false;} }
 function card(job) {
   const reasons=[...(job.roleMatches.length?[`Cargo: ${job.roleMatches.slice(0,2).join(', ')}`]:[]),...job.skillMatches.slice(0,5)];

@@ -38,6 +38,8 @@ export async function syncSource(env, source, fetcher = fetch) {
     await env.DB.prepare('UPDATE sources SET last_attempt=? WHERE id=?').bind(time,source.id).run();
     const read = async (url, html=false) => {
       const response = await fetcher(url, { headers: { accept: html?'text/html':'application/json', 'user-agent': 'VagaRadar-Personal/1.0' }, signal: AbortSignal.timeout(10000) });
+      if(response.status===403) throw new Error('Fonte bloqueou o acesso público (HTTP 403). Consulte a busca externa.');
+      if(response.status===429) throw new Error('Fonte limitou as consultas (HTTP 429). Aguarde a próxima rodada.');
       if (!response.ok) throw new Error(`A fonte respondeu HTTP ${response.status}. Confira o identificador da empresa.`);
       const text=await response.text();
       if(text.length>3000000) throw new Error('Fonte excedeu o limite de tamanho seguro.');
@@ -57,7 +59,7 @@ export async function syncSource(env, source, fetcher = fetch) {
           const detail=await read(publicDetailURL(source.provider,card.id),true);
           if(/no longer accepting applications|no longer available|nao aceita mais candidaturas|não aceita mais candidaturas/i.test(plainPublic(detail))) continue;
           records.push((source.provider==='linkedin'?linkedInDetail:indeedDetail)(detail,card));
-        }catch{failed++;}
+        }catch(error){if(/HTTP (?:403|429)/.test(error.message))throw error;failed++;}
       }
       if(failed && !records.length) throw new Error('Descrições públicas inacessíveis. A fonte pode exigir login ou limitar consultas. Nenhum bloqueio foi contornado.');
       warning=`Busca parcial: até 10 descrições por consulta; ${failed} inacessível(is). Não representa todas as vagas do portal.`;
@@ -138,7 +140,7 @@ export async function verifyJob(env,id,fetcher=fetch){
   }
 }
 async function syncAll(env, force = false) {
-  const lease = Date.now() + 300000;
+  const lease = Date.now() + 600000;
   const lock = await env.DB.prepare('UPDATE sync_lock SET until_ms=? WHERE id=1 AND until_ms<? RETURNING id').bind(lease, Date.now()).first();
   if (!lock) return [{ ok:false, error:'Já existe uma coleta em andamento. Aguarde.' }];
   try {

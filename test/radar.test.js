@@ -185,3 +185,10 @@ test('source-provider migration preserves existing vacancies and their favorites
   assert.equal(db.prepare('SELECT status FROM saved').get().status,'saved');
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
 });
+test('public collection stops immediately when a detail request is rate limited',async()=>{
+  const environment=env();const linked=await environment.DB.prepare("SELECT * FROM sources WHERE provider='linkedin'").first();
+  const card=id=>`<li><div data-entity-urn="urn:li:jobPosting:${id}"><h3 class="base-search-card__title">React Developer</h3><span class="job-search-card__location">Remote Brazil</span></div></li>`;
+  let requests=0;
+  const result=await syncSource(environment,linked,async url=>{requests++;return url.includes('seeMoreJobPostings')?new Response(card('123')+card('456')):new Response('',{status:429});});
+  assert.equal(result.ok,false);assert.equal(requests,2);assert.match(result.error,/429/);
+});
