@@ -1,4 +1,5 @@
 import { assess, eligibility, normalize, sourceURL, safeJobURL, validateProfile } from './domain.js';
+import { linkedInCards, indeedCards, linkedInDetail, indeedDetail, discoveryQuery, publicSearchURL, publicDetailURL } from './public-sources.js';
 
 const encoder = new TextEncoder();
 const json = (value, status = 200, extra = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
@@ -34,13 +35,36 @@ function cookie(request, value, maxAge) {
 export async function syncSource(env, source, fetcher = fetch) {
   const time = stamp();
   try {
-    const read = async url => {
-      const response = await fetcher(url, { headers: { accept: 'application/json', 'user-agent': 'VagaRadar-Personal/1.0' }, signal: AbortSignal.timeout(20000) });
+    await env.DB.prepare('UPDATE sources SET last_attempt=? WHERE id=?').bind(time,source.id).run();
+    const read = async (url, html=false) => {
+      const response = await fetcher(url, { headers: { accept: html?'text/html':'application/json', 'user-agent': 'VagaRadar-Personal/1.0' }, signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`A fonte respondeu HTTP ${response.status}. Confira o identificador da empresa.`);
-      return response.json();
+      const text=await response.text();
+      if(text.length>3000000) throw new Error('Fonte excedeu o limite de tamanho seguro.');
+      return html?text:JSON.parse(text);
     };
-    const data = await read(sourceURL(source));
-    let records = source.provider === 'lever' ? data : data.jobs;
+    const publicBoard=['linkedin','indeed'].includes(source.provider);
+    let records, warning=null;
+    if(publicBoard){
+      const profile=JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
+      const html=await read(publicSearchURL(source.provider,discoveryQuery(profile)),true);
+      const cards=(source.provider==='linkedin'?linkedInCards:indeedCards)(html);
+      if(!cards.length && !/no results|nenhum resultado|nao encontramos|no matching jobs|we couldn.t find/i.test(html)) throw new Error('Formato público indisponível ou acesso limitado. Abra a busca externa para consultar diretamente.');
+      records=[];let failed=0;
+      const candidates=[...new Map(cards.map(card=>[card.id,card])).values()].filter(card=>!assess({...card,description:''},profile).levelConflict).slice(0,10);
+      for(const card of candidates){
+        try{
+          const detail=await read(publicDetailURL(source.provider,card.id),true);
+          if(/no longer accepting applications|no longer available|nao aceita mais candidaturas|não aceita mais candidaturas/i.test(plainPublic(detail))) continue;
+          records.push((source.provider==='linkedin'?linkedInDetail:indeedDetail)(detail,card));
+        }catch{failed++;}
+      }
+      if(failed && !records.length) throw new Error('Descrições públicas inacessíveis. A fonte pode exigir login ou limitar consultas. Nenhum bloqueio foi contornado.');
+      warning=`Busca parcial: até 10 descrições por consulta; ${failed} inacessível(is). Não representa todas as vagas do portal.`;
+    }else{
+      const data = await read(sourceURL(source));
+      records = source.provider === 'lever' ? data : data.jobs;
+    }
     if (!Array.isArray(records)) throw new Error('Formato de resposta inesperado.');
     if (source.provider === 'lever') {
       if (records.length > 100) throw new Error('Formato de paginação inesperado na fonte Lever.');
@@ -58,14 +82,12 @@ export async function syncSource(env, source, fetcher = fetch) {
     const jobs = records.map(record => normalize(source.provider, record, source)).filter(job => eligibility(job).eligible);
     if (jobs.length > 200) throw new Error('Fonte com mais de 200 vagas elegíveis. Coleta suspensa para proteger a cota gratuita.');
     if (jobs.some(job => !job.title || !safeJobURL(job.url, source.provider) || job.id.endsWith(':undefined'))) throw new Error('A fonte retornou anúncio sem identificação ou link oficial reconhecido.');
-    const statements = jobs.map(job => env.DB.prepare(`INSERT INTO jobs(id,source_id,title,company,location,description,url,workplace,published,first_seen,last_seen,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)
-      ON CONFLICT(id) DO UPDATE SET title=excluded.title,company=excluded.company,location=excluded.location,description=excluded.description,url=excluded.url,workplace=excluded.workplace,published=excluded.published,last_seen=excluded.last_seen,active=1`).bind(job.id, source.id, job.title, job.company, job.location, job.description, job.url, job.workplace, job.published, time, time));
+    const statements = jobs.map(job => jobStatement(env,job,time));
     // D1 limits batch sizes: mark closed only after every import batch succeeds.
     for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
-    await env.DB.batch([
-      env.DB.prepare('UPDATE jobs SET active=0 WHERE source_id=? AND last_seen<>?').bind(source.id, time),
-      env.DB.prepare('UPDATE sources SET last_sync=?,error=NULL WHERE id=?').bind(time, source.id),
-    ]);
+    const completion=[env.DB.prepare('UPDATE sources SET last_sync=?,error=NULL,warning=? WHERE id=?').bind(time,warning,source.id)];
+    if(!publicBoard) completion.push(env.DB.prepare('UPDATE jobs SET active=0 WHERE source_id=? AND last_seen<>?').bind(source.id,time));
+    await env.DB.batch(completion);
     return { id: source.id, ok: true, count: jobs.length };
   } catch (error) {
     const detail = String(error.message);
@@ -74,15 +96,57 @@ export async function syncSource(env, source, fetcher = fetch) {
     return { id: source.id, ok: false, error: message };
   }
 }
+const plainPublic=value=>String(value).replace(/<[^>]*>/g,' ');
+function jobStatement(env,job,time){
+  return env.DB.prepare(`INSERT INTO jobs(id,source_id,title,company,location,description,url,workplace,published,first_seen,last_seen,active,details,check_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,'listed')
+    ON CONFLICT(id) DO UPDATE SET title=excluded.title,company=excluded.company,location=excluded.location,description=excluded.description,url=excluded.url,workplace=excluded.workplace,published=excluded.published,last_seen=excluded.last_seen,active=1,details=excluded.details,check_status='listed'`).bind(job.id,job.source_id,job.title,job.company,job.location,job.description,job.url,job.workplace,job.published||null,time,time,JSON.stringify(job.details||{}));
+}
+export async function verifyJob(env,id,fetcher=fetch){
+  const job=await env.DB.prepare('SELECT jobs.*,sources.provider,sources.slug FROM jobs JOIN sources ON sources.id=jobs.source_id WHERE jobs.id=?').bind(id).first();
+  if(!job) return {ok:false,error:'Vaga não encontrada.'};
+  if(job.checked_at && Date.now()-Date.parse(job.checked_at)<300000) return {ok:true,cached:true};
+  const externalId=job.id.split(':').pop();
+  const source={id:job.source_id,provider:job.provider,slug:job.slug,company:job.company};
+  const publicBoard=['linkedin','indeed'].includes(job.provider);
+  const url=publicBoard?publicDetailURL(job.provider,externalId):job.provider==='lever'?`https://api.lever.co/v0/postings/${encodeURIComponent(job.slug)}/${encodeURIComponent(externalId)}?mode=json`:`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(job.slug)}/jobs/${encodeURIComponent(externalId)}?content=true`;
+  const time=stamp();
+  try{
+    const response=await fetcher(url,{headers:{'user-agent':'VagaRadar-Personal/1.0'},signal:AbortSignal.timeout(10000)});
+    if([404,410].includes(response.status)){
+      await env.DB.prepare("UPDATE jobs SET active=0,checked_at=?,check_status='closed' WHERE id=?").bind(time,id).run();
+      return {ok:true,status:'closed'};
+    }
+    if(!response.ok) throw new Error('Fonte indisponível.');
+    let raw;
+    if(publicBoard){
+      const html=await response.text();
+      if(/no longer accepting applications|no longer available|não aceita mais candidaturas/i.test(plainPublic(html))){
+        await env.DB.prepare("UPDATE jobs SET active=0,checked_at=?,check_status='closed' WHERE id=?").bind(time,id).run();
+        return {ok:true,status:'closed'};
+      }
+      raw=(job.provider==='linkedin'?linkedInDetail:indeedDetail)(html,{id:externalId,title:job.title,company:job.company,location:job.location,published:job.published});
+    }else raw=await response.json();
+    const normalized=normalize(job.provider,raw,source);
+    if(normalized.id!==job.id||!normalized.title||!normalized.description||!safeJobURL(normalized.url,job.provider)) throw new Error('Dados inconsistentes.');
+    await jobStatement(env,normalized,time).run();
+    const eligible=eligibility(normalized).eligible;
+    await env.DB.prepare('UPDATE jobs SET active=?,checked_at=?,check_status=? WHERE id=?').bind(eligible?1:0,time,eligible?'confirmed':'ineligible',id).run();
+    return {ok:true,status:eligible?'confirmed':'ineligible'};
+  }catch{
+    await env.DB.prepare("UPDATE jobs SET checked_at=?,check_status='unconfirmed' WHERE id=?").bind(time,id).run();
+    return {ok:false,error:'Não foi possível reconfirmar esta vaga. O provedor pode estar indisponível ou exigir login.'};
+  }
+}
 async function syncAll(env, force = false) {
   const lease = Date.now() + 300000;
   const lock = await env.DB.prepare('UPDATE sync_lock SET until_ms=? WHERE id=1 AND until_ms<? RETURNING id').bind(lease, Date.now()).first();
   if (!lock) return [{ ok:false, error:'Já existe uma coleta em andamento. Aguarde.' }];
   try {
-  const { results } = await env.DB.prepare('SELECT * FROM sources WHERE enabled=1 ORDER BY id LIMIT 8').all();
+  const { results } = await env.DB.prepare('SELECT * FROM sources WHERE enabled=1 ORDER BY COALESCE(last_attempt,\'\'),id').all();
   const outputs = [];
   for (const source of results) {
-    if (!force && source.last_sync && Date.now() - Date.parse(source.last_sync) < 110 * 60000) continue;
+    if (!force && source.last_attempt && Date.now() - Date.parse(source.last_attempt) < 110 * 60000) continue;
+    if(outputs.length>=5) break;
     outputs.push(await syncSource(env, source));
   }
   await env.DB.prepare('DELETE FROM login_limits WHERE bucket < ?').bind(String(Math.floor(Date.now() / 900000) - 4)).run();
@@ -111,20 +175,30 @@ async function api(request, env, ctx) {
   if (path === '/api/profile' && request.method === 'PUT') {
     const profile = validateProfile(await body(request));
     await env.DB.prepare('UPDATE settings SET profile=? WHERE id=1').bind(JSON.stringify(profile)).run();
+    await env.DB.prepare("UPDATE sources SET last_attempt=NULL WHERE provider IN ('linkedin','indeed')").run();
     return json(profile);
+  }
+  if(path==='/api/verify' && request.method==='POST'){
+    const {id}=await body(request);
+    if(typeof id!=='string'||id.length>250) throw new Error('Identificador inválido.');
+    const result=await verifyJob(env,id);
+    return json(result,result.ok?200:502);
   }
   if (path === '/api/jobs' && request.method === 'GET') {
     const profile = JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
-    const { results } = await env.DB.prepare('SELECT jobs.*,saved.status,sources.enabled AS source_enabled,sources.error AS source_error,sources.last_sync AS source_sync FROM jobs LEFT JOIN saved ON saved.job_id=jobs.id JOIN sources ON sources.id=jobs.source_id ORDER BY first_seen DESC LIMIT 2000').all();
-    return json({ jobs: results.map(job => assess(job, profile)), limit: 2000 });
+    const { results } = await env.DB.prepare('SELECT jobs.*,saved.status,sources.provider,sources.slug,sources.enabled AS source_enabled,sources.error AS source_error,sources.last_sync AS source_sync FROM jobs LEFT JOIN saved ON saved.job_id=jobs.id JOIN sources ON sources.id=jobs.source_id ORDER BY first_seen DESC LIMIT 3000').all();
+    return json({ jobs: results.map(job => assess(job, profile)), limit: 3000 });
   }
-  if (path === '/api/sources' && request.method === 'GET') return json((await env.DB.prepare('SELECT * FROM sources ORDER BY id').all()).results);
+  if (path === '/api/sources' && request.method === 'GET') {
+    const profile=JSON.parse((await env.DB.prepare('SELECT profile FROM settings WHERE id=1').first()).profile);
+    return json((await env.DB.prepare('SELECT * FROM sources ORDER BY id').all()).results.map(source=>({...source,searchUrl:source.provider==='linkedin'?publicSearchURL(source.provider,discoveryQuery(profile)).replace('/jobs-guest/jobs/api/seeMoreJobPostings/search','/jobs/search'):source.provider==='indeed'?publicSearchURL(source.provider,discoveryQuery(profile)):source.provider==='lever'?`https://jobs.lever.co/${source.slug}`:`https://job-boards.greenhouse.io/${source.slug}`})));
+  }
   if (path === '/api/sources' && request.method === 'POST') {
     const source = await body(request);
     sourceURL(source);
     if (typeof source.company !== 'string' || !source.company.trim() || source.company.length > 100) throw new Error('Informe o nome da empresa.');
     const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM sources').first();
-    if (count.n >= 8) throw new Error('Limite pessoal de 8 fontes. Desative ou substitua fontes existentes.');
+    if (count.n >= 12) throw new Error('Limite pessoal de 12 fontes.');
     await env.DB.prepare('INSERT INTO sources(provider,slug,company) VALUES(?,?,?)').bind(source.provider, source.slug, source.company.trim()).run();
     return json({ ok: true });
   }

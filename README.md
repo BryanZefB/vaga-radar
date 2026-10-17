@@ -1,100 +1,87 @@
 # Vaga Radar
 
-**Produção:** https://vaga-radar.bryanzef7.workers.dev — acesso pessoal por senha. Worker, D1, segredos e agendamento já foram configurados. Não é necessário repetir os passos de criação abaixo para esta conta.
+**Sistema publicado:** https://vaga-radar.bryanzef7.workers.dev — uso pessoal, protegido por senha.
 
-Aplicação web pessoal para Bryan acompanhar oportunidades remotas no Brasil. Frontend em português, Worker com API privada, SQLite/D1, coleta programada, perfil editável, favoritos e acompanhamento manual de candidaturas.
+Aplicação para acompanhar vagas explicitamente remotas e disponíveis para trabalhar do Brasil, com aderência ao perfil profissional de Bryan. Frontend sem bibliotecas externas, API em Cloudflare Workers e banco D1. O código não contém senha de acesso, token Cloudflare, currículo PDF, telefone ou e-mail do currículo.
 
-## O que está implementado
+## Buscar e filtrar
 
-- Perfil profissional inicial baseado no currículo, sem telefone, e-mail ou URL pessoal.
-- CLT, PJ e estágio. `Full-time` não é convertido automaticamente em CLT.
-- Pontuação explicada por cargo, tecnologias e nível. Títulos sênior/lead/staff ficam fora das recomendações iniciais.
-- Localização Brasil e remoto explícitos. Híbrido, presencial e LATAM/worldwide sem Brasil ficam fora. Isso reduz falsos positivos, mas perde anúncios com localização incompleta.
-- APIs públicas de páginas de carreira Lever e Greenhouse. As fontes sugeridas foram consultadas; Wellhub (`gympass`) retornou vagas elegíveis. A fonte `truelogic`, indisponível, fica pausada.
-- Coleta a cada duas horas. Botão de atualização respeita intervalo de 110 minutos por fonte após sucesso.
-- Deduplicação por provedor, empresa e identificador original; preservação da primeira descoberta; encerramento de anúncios removidos da fonte após coleta completa bem-sucedida.
-- Fonte sem coleta nas últimas seis horas ou com erro deixa de alimentar o radar até uma coleta bem-sucedida. Favoritos continuam disponíveis com aviso.
-- Senha pessoal, cookie HttpOnly/Secure em HTTPS, sessão assinada por sete dias, proteção de origem e limite persistente de dez tentativas de login a cada quinze minutos.
+- **Para seu perfil** aplica cargos, tecnologias principais, habilidades, termos excluídos, contratação, senioridade e mínimos de experiência explícitos.
+- **Todas no radar** mostra as vagas que passaram por Brasil e remoto, mesmo quando não combinam com o perfil.
+- Filtros adicionais: empresa, fonte, nível indicado no título, aderência mínima, publicação, primeira descoberta, salvas/candidaturas, tecnologias, idioma declarado, salário estruturado e confirmação individual.
+- Datas de publicação ausentes nunca são substituídas por datas de coleta. Não interpretamos `full-time` automaticamente como CLT.
+- O perfil profissional é editável. O currículo fornecido indica 2+ anos de desenvolvimento, Node.js/NestJS, React, TypeScript, PostgreSQL e AWS. O PDF não é armazenado no aplicativo nem enviado aos portais.
 
-Não usa IA paga, banco pago, e-mail transacional ou domínio comprado. Não envia currículos nem faz candidaturas automaticamente. Não há dados de vagas fictícias no banco inicial.
+## Descrição e informações completas
 
-## Limites da busca
+Clique em **Descrição completa e todas as informações** em qualquer vaga. A janela mostra o texto integral disponibilizado pela fonte, requisitos e benefícios incluídos nesse texto, localização original, contratação, departamento, datas, remuneração estruturada, evidências de Brasil/remoto, motivos da aderência, dados complementares e link original. Descrições não são cortadas em 40 mil caracteres.
 
-Nenhum sistema pode garantir chegar antes de todas as outras pessoas, exclusividade, legitimidade absoluta ou cobertura de toda a web. O aplicativo consulta vagas públicas; a rapidez depende do cron e de quando a empresa publica no ATS. O horário do cron não é um SLA.
+Campos que a fonte não informa aparecem como não informados. Não inventamos salário, prazo, idioma ou requisitos. O filtro de salário exige valores estruturados, mas o texto completo também pode mencionar remuneração. O salário mínimo do perfil é uma preferência sinalizada, sem conversão automática de moedas/períodos.
 
-A pontuação é uma heurística de palavras-chave, não uma probabilidade de contratação. Inglês, anos de experiência, formação, autorização de trabalho e todos os requisitos do anúncio precisam de conferência. Salário mínimo é apenas uma preferência sinalizada; não é aplicado como filtro rígido porque valor, moeda e período não são estruturados nessas fontes. Estágios podem exigir matrícula ativa, mesmo com uma graduação concluída.
+## Fontes
 
-“Publicação” e “primeira coleta” são datas distintas. Alteração de anúncio no Greenhouse não é tratada como publicação nova. A fonte confirma que o anúncio estava listado na última coleta, não que está aberto neste instante. Uma empresa usar um ATS conhecido não elimina fraudes: confira empresa, domínio e recrutador; nunca pague para participar de um processo.
+O banco inicial inclui páginas públicas de carreira em Greenhouse/Lever (Nubank, CloudWalk, Wellhub, CI&T, Stone, EBANX e dLocal), além de buscas públicas de LinkedIn e Indeed. A sugestão antiga Truelogic permanece pausada após HTTP 404. Fontes sem vagas elegíveis continuam mostrando zero; a existência de uma página de carreira não implica haver oportunidades para este perfil.
 
-## Rodar e desenvolver
+**LinkedIn e Indeed têm conectores reais de páginas públicas**, sem conta, cookies de login, execução de JavaScript remoto, contorno de CAPTCHA ou de bloqueios. As consultas usam os termos profissionais do perfil, Brasil, modalidade remota e parâmetros de data. O sistema lê até 10 descrições acessíveis por consulta, após excluir títulos acima dos níveis selecionados. Uma busca não representa todo o portal, e os filtros do portal são reconferidos na descrição/campos publicados: um resultado em uma busca por remoto pode ser híbrido e ficar fora do radar.
 
-Requer Node.js 22+; os testes usam `node:sqlite`, disponível a partir do Node 22.13. Validado aqui com Node 24.19.
+Bloqueios, login obrigatório, HTTP 403/429, formato alterado ou descrição indisponível geram diagnóstico. O sistema não simula resultados nem importa apenas título sem a descrição. Em **Fontes de vagas**, o botão para a busca original permite consultar o portal diretamente. LinkedIn/Indeed podem limitar o acesso a partir da Cloudflare mesmo quando as páginas respondem em outro ambiente.
+
+Há até 12 fontes cadastradas. O cron executa a cada hora e consulta até 5 fontes em rodízio; cada fonte tem intervalo mínimo de 110 minutos entre tentativas. O botão de atualização respeita os mesmos limites. As APIs de Lever são paginadas; fontes muito grandes são interrompidas com diagnóstico, em vez de importar uma lista incompleta e encerrar vagas por engano. A remoção de um resultado de uma busca parcial de LinkedIn/Indeed **não** significa encerramento.
+
+## O que a verificação confirma
+
+- **Listada na fonte:** o anúncio estava na resposta pública da fonte na última coleta.
+- **Reconfirmada na fonte:** a ação **Consultar novamente na fonte** consultou a publicação individual e conferiu identificador, texto, URL, país e modalidade. Consultas individuais são limitadas a uma a cada 5 minutos por vaga.
+- **Precisa reconfirmação:** não foi possível consultar a origem ou a evidência ficou antiga.
+- **Encerrada na fonte:** a consulta individual retornou 404/410 ou indicação explícita de encerramento; nas APIs completas, a ausência depois de uma importação completa também encerra o registro.
+- **País/modalidade não confirmados:** a revisão individual não confirmou os critérios, sem presumir que o anúncio foi encerrado.
+
+O radar exige evidência de Brasil (país informado, localização brasileira inequívoca, título ou residência explicitamente requerida) e de remoto (campo estruturado, localização, título ou declaração clara do modelo). Híbrido/presencial e restrições explícitas incompatíveis ficam fora. LATAM/worldwide sem Brasil continua inconclusivo. Uma empresa brasileira não basta para inferir que uma vaga pode ser exercida no Brasil.
+
+A confirmação é da **presença e dos dados do anúncio**, não uma garantia absoluta de legitimidade, identidade do recrutador ou contratação. Confira empresa, domínio e processo e não pague para participar. Não prometemos exclusividade nem descobrir uma vaga antes de todas as outras pessoas. Registros sem presença recente na origem (6 horas) saem do radar; favoritos preservam o histórico com o estado disponível.
+
+## Aderência e limites
+
+A pontuação usa palavras-chave de cargo, habilidades e nível. Pelo menos uma tecnologia principal deve aparecer. Com a stack principal ativa, títulos com tecnologias como Java/Angular fora das habilidades cadastradas não são recomendados só porque citam Node.js como diferencial. Gestão, sênior, master e especialista ficam fora com o perfil inicial júnior/pleno. Requisitos mínimos de experiência explicitamente identificados acima dos anos cadastrados também ficam fora.
+
+Não há análise infalível de todos os requisitos, inglês, autorização de trabalho, formação ou anos de experiência. Casos não claros exigem leitura. A formação informada está concluída: estágios podem exigir matrícula ativa. A aplicação registra apenas candidaturas marcadas pelo usuário; não se candidata nem envia currículos automaticamente.
+
+## Desenvolvimento
+
+Node.js 22.13+ (validado com Node 24); os testes usam `node:sqlite`.
 
 ```bash
-cd /workspace/vaga-radar
 npm ci
 npm test
 npm run db:local
+npm run dev
 ```
 
-Crie `.dev.vars`, ignorado pelo Git, com `APP_PASSWORD` (12 ou mais caracteres) e `SESSION_SECRET` (32 ou mais caracteres aleatórios). Use uma senha forte e exclusiva. Os valores locais gerados nesta sessão servem somente ao desenvolvimento; não estão no pacote de entrega.
+Para desenvolvimento, configure `APP_PASSWORD` (12+ caracteres) e `SESSION_SECRET` (32+ caracteres aleatórios) em `.dev.vars`, ignorado pelo Git. Não use segredos de produção em exemplos, commits ou capturas. O cron não roda automaticamente no modo local.
 
-```text
-APP_PASSWORD=sua-senha-local-forte
-SESSION_SECRET=segredo-aleatorio-longo-exclusivo-do-desenvolvimento
+Em ambientes com diretório pessoal somente leitura, use `npm ci --cache /tmp/vaga-radar-npm-cache` e o prefixo `XDG_CONFIG_HOME=/tmp/vaga-radar-config WRANGLER_SEND_METRICS=false` para Wrangler.
+
+## Publicação e configuração
+
+A conta, o ID do D1, o binding `DB`, os assets e o cron estão em `wrangler.jsonc`. Esses IDs não são credenciais. `keep_vars: true` preserva as variáveis e os segredos configurados no servidor durante os deploys.
+
+A produção já existe. Para uma nova conta, ajuste `account_id`, crie o D1 (`npx wrangler d1 create vaga-radar`), preencha seu `database_id`, configure os segredos e aplique as migrações na base correta. Para atualizar a instalação atual com novas migrações:
+
+```bash
+npm run db:remote
+npm run deploy
 ```
 
-Depois execute `npm run dev`. O terminal informa a porta local. Nenhuma conta Cloudflare é necessária para os testes locais. O cron não executa automaticamente no desenvolvimento; use o botão de atualizar para uma coleta manual.
+O repositório está ligado a Workers Builds. O comando de deploy do painel é `npx wrangler deploy`; migrações novas devem ser aplicadas antes do deploy. Segredos de produção: `APP_PASSWORD` e `SESSION_SECRET`. O token administrativo é fornecido separadamente pelo ambiente seguro como `CLOUDFLARE_API_TOKEN`, restrito a `api.cloudflare.com`. Nenhum desses valores é versionado. Rotacionar `SESSION_SECRET` invalida as sessões.
 
-Em ambientes com diretório pessoal somente leitura, use um cache gravável (`npm ci --cache /tmp/vaga-radar-npm-cache`) e `XDG_CONFIG_HOME=/tmp/vaga-radar-config WRANGLER_SEND_METRICS=false` antes dos comandos Wrangler.
+Antes de modificar o esquema, faça backup D1. As migrações preservam vagas, perfil e favoritos. As páginas externas são tratadas como dados não confiáveis; descrições são convertidas em texto e escapadas, nunca executadas como código.
 
-## Recriar a publicação em outra conta, sem comprar domínio
+## Plano gratuito
 
-A publicação atual já está pronta. Os passos desta seção são referência para uma nova conta: ajuste também `account_id` em `wrangler.jsonc`. O produto é acessado inteiramente no navegador após publicado. Os comandos abaixo também podem ser executados em um terminal cloud, sem instalar ferramentas no seu computador.
+Não há dependência de API paga, IA paga, domínio comprado ou plano pago ativado pelo projeto. O desenho limita fontes, volume, tamanho de respostas e consultas. As cotas e termos de Cloudflare e dos portais podem mudar, e o uso real deve ser acompanhado. Limites atuais de coleta: 200 vagas elegíveis por fonte, 1.500 registros Greenhouse, 500 Lever e 10 descrições por consulta de cada portal público. Acima disso a fonte recebe diagnóstico; não alteramos os limites da conta para um plano pago.
 
-1. Crie uma conta em https://dash.cloudflare.com/sign-up e mantenha **Workers Free**. Não contrate Workers Paid nem serviços pagos para esse projeto.
-2. No terminal do projeto, execute `npx wrangler login` e conclua o fluxo oficial no navegador. Nunca compartilhe senha ou token pelo chat.
-3. Execute `npx wrangler d1 create vaga-radar`. Copie somente o `database_id` retornado para o campo correspondente em `wrangler.jsonc`; mantenha o binding `DB`.
-4. Execute `npm run db:remote` para aplicar as migrações na base nova. Não execute isso sobre uma base de outra aplicação.
-5. Execute `npm run deploy`. O Worker usa o endereço gratuito `workers.dev` atribuído pela Cloudflare. A API permanece bloqueada enquanto os segredos não estiverem configurados.
-6. Execute `npx wrangler secret put APP_PASSWORD` e digite uma senha forte de pelo menos 12 caracteres no terminal seguro. Execute `npx wrangler secret put SESSION_SECRET` e informe um valor aleatório de pelo menos 32 caracteres. Também é possível configurar os segredos nas configurações do Worker pelo painel e publicar a alteração. Não coloque esses valores no código ou em commits.
-7. Abra o endereço informado pela publicação, entre com a senha e clique em **Atualizar fontes**. Veja **Fontes de vagas**: valide cada empresa, o resultado da consulta e a data. Fontes que não existirem precisam ser substituídas por identificadores reais de páginas que você conhece.
-8. Confira se um anúncio exibido tem Brasil e remoto, abra a publicação original e valide seu conteúdo. Salve uma vaga e recarregue para conferir persistência.
-9. No painel, confira os Cron Triggers e métricas depois da primeira execução programada. Publicar o código não comprova que a coleta agendada já ocorreu.
+Documentação: https://developers.cloudflare.com/workers/platform/pricing/ e https://developers.cloudflare.com/d1/platform/limits/ .
 
-Rotacionar `SESSION_SECRET` encerra todas as sessões existentes. Não reutilize credenciais de outros serviços. Exporte periodicamente o D1 pelo mecanismo de backup da Cloudflare se desejar preservar favoritos e perfil.
+## Testes
 
-## Gratuidade e tamanho
-
-O projeto foi desenhado para uso individual nas cotas gratuitas de Workers e D1, com até oito fontes, 1.500 anúncios brutos por resposta Greenhouse e 500 por fonte Lever (com paginação) e 200 anúncios elegíveis por fonte. Acima desses limites a coleta daquela fonte falha com diagnóstico, sem encerrar anúncios antigos. Não há dependência de pagamento, mas os limites e termos da plataforma podem mudar. Confira os limites atuais no painel antes de publicar; não ative upgrades automáticos.
-
-Leitura oficial: https://developers.cloudflare.com/workers/platform/pricing/ e https://developers.cloudflare.com/d1/platform/limits/ . O desempenho e o consumo real de CPU do cron precisam ser medidos na conta gratuita; não foram validados em produção nesta sessão.
-
-## Adicionar empresas
-
-Em **Fontes de vagas**, escolha Lever ou Greenhouse e informe empresa e identificador da página oficial. Por exemplo, em `jobs.lever.co/empresa`, o identificador é `empresa`. O aplicativo só consulta os dois hosts fixos de API; não faz scraping de LinkedIn/Indeed nem aceita URLs arbitrárias como fontes. O link final do anúncio Greenhouse pode apontar para o domínio de carreira da própria empresa.
-
-Uma fonte pausada não é consultada e suas vagas saem do radar. O limite de oito inclui fontes pausadas. Para substituir uma fonte existente, ajuste conscientemente seu registro no banco; não há exclusão de histórico na interface desta versão.
-
-## Validação realizada
-
-- Testes automatizados de elegibilidade, pontuação, senioridade, contratos, entrada inválida e URLs.
-- API privada: autenticação, assinatura de sessão, origem, limite de login, edição de perfil, favoritos.
-- Importação com respostas de teste: inserção, deduplicação, encerramento, preservação de favoritos e tratamento de erro HTTP.
-- Migrações aplicadas no D1 local, Worker iniciado com Wrangler e navegação real em Chromium desktop e celular.
-- Após liberar a rede, a coleta real em produção consultou Nubank, CloudWalk e Wellhub. A primeira coleta importou 23 vagas remotas no Brasil da Wellhub, com 2 aderentes aos filtros iniciais. As outras duas fontes responderam com zero vagas elegíveis.
-- Worker publicado, seis migrações aplicadas no D1 e dois segredos de produção configurados. Página inicial, login, perfil e importação real foram verificados por HTTPS. O cron foi registrado e confirmado na API Cloudflare; a primeira execução automática ainda precisa ocorrer. O teste manual de coleta não comprova execução agendada nem consumo prolongado das cotas.
-
-## Estrutura
-
-`src/worker.js`: autenticação, API, cron e persistência. `src/domain.js`: normalização e regras de aderência. `public/`: interface sem bibliotecas externas. `migrations/`: banco e perfil inicial. `test/`: testes sem acesso externo. `wrangler.jsonc`: configuração de publicação. `package-lock.json`: dependências fixadas.
-
-O acervo `skills-bryan` permanece separado e sem alterações.
-
-## Atualização da preparação de publicação
-
-Com a rede liberada, a API pública Greenhouse da Wellhub (`gympass`) respondeu com 88 anúncios, dos quais 23 passaram pelo filtro estrito de Brasil e remoto na consulta de preparação. Isso confirma a leitura e normalização da fonte naquele momento, não uma publicação do sistema nem a aderência das 23 vagas ao perfil. A migração `0004_verified_source.sql` adiciona essa fonte e pausa a sugestão `truelogic`, que retornou HTTP 404. O acesso Cloudflare foi concedido pelo segredo seguro `CLOUDFLARE_API_TOKEN`; criação do D1 e publicação foram concluídas. Valores de segredos e a senha de acesso não são versionados.
-
-## Filtros de stack e senioridade
-
-O perfil inclui tecnologias principais editáveis (Node.js/NestJS/React e aliases). Pelo menos uma precisa aparecer no anúncio. Com esse filtro ativo, títulos que mencionam Java, Angular, Python, Kotlin, Go/Golang, PHP ou Ruby ficam fora das recomendações quando a tecnologia não está nas habilidades cadastradas. Assim, uma vaga Java/Angular que cita Node.js apenas como diferencial não é tratada como adequada ao perfil inicial. Títulos de gestão, master, especialista e arquitetura também ficam fora com os níveis júnior/pleno. As vagas continuam consultáveis em Todas no radar; a heurística não substitui ler os requisitos.
+`npm test` cobre país/modalidade, pontuação, stack, experiência, filtros, parsers públicos, autenticação, persistência, paginação, estados de verificação e preservação de dados na migração. Testes com respostas simuladas são distintos de coletas reais. A interface foi exercitada no Chromium local, inclusive descrição integral e filtros no celular. A validação em produção usa HTTPS com verificação TLS mantida; o armazenamento de certificados do navegador não é alterado pelo projeto.

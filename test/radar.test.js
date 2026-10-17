@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
-import worker, { syncSource } from '../src/worker.js';
+import { readFileSync, readdirSync } from 'node:fs';
+import worker, { syncSource, verifyJob } from '../src/worker.js';
 import { assess, contracts, eligibility, normalize, sourceURL, safeJobURL, validateProfile } from '../src/domain.js';
 
 const profile = { roles:['developer','full-stack'], skills:['React','Node.js'], levels:['pleno','junior'], exclude:[], contracts:['CLT','PJ','Estágio'], minSalary:0 };
@@ -10,7 +10,7 @@ const base = { id:'test', title:'Full-stack Developer Pleno', company:'Empresa t
 const source = { id:2, provider:'lever', slug:'cloudwalk', company:'CloudWalk' };
 function database() {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql','0002_bryan_profile.sql','0003_sync_lock.sql','0004_verified_source.sql','0005_ciandt.sql','0006_focus_stack.sql']) sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url),'utf8'));
+  for (const file of readdirSync(new URL('../migrations/',import.meta.url)).filter(x=>x.endsWith('.sql')).sort()) sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url),'utf8'));
   const wrapper = {
     prepare(sql) {
       let args = [];
@@ -145,4 +145,43 @@ test('unsafe links abort import and saved state accepts existing jobs only', asy
   assert.equal(result.ok,false);
   const cookie = await login(environment);
   assert.equal((await worker.fetch(request('saved','PUT',{id:'missing',status:'saved'},cookie),environment)).status,404);
+});
+test('individual confirmation refreshes complete details and closed/unavailable are distinct',async()=>{
+  const environment=env();
+  await syncSource(environment,source,async()=>Response.json([lever('a'),lever('b'),lever('c')]));
+  assert.equal((await verifyJob(environment,'lever:cloudwalk:a',async()=>Response.json({...lever('a'),descriptionPlain:'React\n'+ 'long description '.repeat(4000)}))).status,'confirmed');
+  const first=await environment.DB.prepare("SELECT * FROM jobs WHERE id='lever:cloudwalk:a'").first();
+  assert.ok(first.description.length>40000);assert.equal(first.check_status,'confirmed');
+  assert.equal((await verifyJob(environment,'lever:cloudwalk:b',async()=>new Response('',{status:404}))).status,'closed');
+  assert.equal((await environment.DB.prepare("SELECT active FROM jobs WHERE id='lever:cloudwalk:b'").first()).active,0);
+  assert.equal((await verifyJob(environment,'lever:cloudwalk:c',async()=>new Response('',{status:429}))).ok,false);
+  const unavailable=await environment.DB.prepare("SELECT * FROM jobs WHERE id='lever:cloudwalk:c'").first();
+  assert.equal(unavailable.active,1);assert.equal(unavailable.check_status,'unconfirmed');
+});
+test('an individual country/model mismatch is flagged without claiming the job is closed',async()=>{
+  const environment=env();
+  await syncSource(environment,source,async()=>Response.json([lever('a')]));
+  assert.equal((await verifyJob(environment,'lever:cloudwalk:a',async()=>Response.json({...lever('a'),categories:{location:'USA'}}))).status,'ineligible');
+  const job=await environment.DB.prepare('SELECT * FROM jobs').first();
+  assert.equal(job.active,0);assert.equal(job.check_status,'ineligible');
+});
+test('partial LinkedIn searches never close postings merely absent from the next search',async()=>{
+  const environment=env();
+  const linked=await environment.DB.prepare("SELECT * FROM sources WHERE provider='linkedin'").first();
+  const card=id=>`<li><div data-entity-urn="urn:li:jobPosting:${id}"><h3 class="base-search-card__title">React Developer</h3><h4 class="base-search-card__subtitle">Empresa teste</h4><span class="job-search-card__location">Remote Brazil</span></div></li>`;
+  let listing=card('123')+card('456');
+  const fetcher=async url=>new Response(url.includes('seeMoreJobPostings')?listing:'<h2 class="top-card-layout__title">React Developer</h2><div class="show-more-less-html__markup">React Node.js. Trabalho remoto.</div>');
+  assert.equal((await syncSource(environment,linked,fetcher)).count,2);
+  listing=card('123');
+  assert.equal((await syncSource(environment,linked,fetcher)).count,1);
+  assert.equal((await environment.DB.prepare('SELECT COUNT(*) AS n FROM jobs WHERE active=1').first()).n,2);
+});
+test('source-provider migration preserves existing vacancies and their favorites',()=>{
+  const db=new DatabaseSync(':memory:');
+  for(const file of readdirSync(new URL('../migrations/',import.meta.url)).filter(x=>x.endsWith('.sql')&&x<'0007').sort())db.exec(readFileSync(new URL(`../migrations/${file}`,import.meta.url),'utf8'));
+  db.exec("INSERT INTO jobs(id,source_id,title,company,location,description,url,workplace,first_seen,last_seen) VALUES('existing',2,'React','Company','Brazil','React','https://jobs.lever.co/cloudwalk/1','remote','2026-10-01','2026-10-01'); INSERT INTO saved VALUES('existing','saved','2026-10-01');");
+  db.exec('BEGIN;'+readFileSync(new URL('../migrations/0007_sources_and_details.sql',import.meta.url),'utf8')+'COMMIT;');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM jobs JOIN sources ON sources.id=jobs.source_id').get().n,1);
+  assert.equal(db.prepare('SELECT status FROM saved').get().status,'saved');
+  assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
 });

@@ -1,0 +1,10 @@
+CREATE TABLE sources_next (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL CHECK(provider IN ('lever','greenhouse','linkedin','indeed')), slug TEXT NOT NULL, company TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_sync TEXT, error TEXT, last_attempt TEXT, warning TEXT, UNIQUE(provider,slug));
+INSERT INTO sources_next(id,provider,slug,company,enabled,last_sync,error) SELECT id,provider,slug,company,enabled,last_sync,error FROM sources;
+CREATE TABLE jobs_next (id TEXT PRIMARY KEY, source_id INTEGER NOT NULL, title TEXT NOT NULL, company TEXT NOT NULL, location TEXT NOT NULL, description TEXT NOT NULL, url TEXT NOT NULL, workplace TEXT NOT NULL, published TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, details TEXT NOT NULL DEFAULT '{}', checked_at TEXT, check_status TEXT NOT NULL DEFAULT 'listed', FOREIGN KEY(source_id) REFERENCES sources_next(id));
+INSERT INTO jobs_next(id,source_id,title,company,location,description,url,workplace,published,first_seen,last_seen,active) SELECT id,source_id,title,company,location,description,url,workplace,published,first_seen,last_seen,active FROM jobs;
+DROP TABLE jobs;
+DROP TABLE sources;
+ALTER TABLE sources_next RENAME TO sources;
+ALTER TABLE jobs_next RENAME TO jobs;
+CREATE INDEX jobs_active ON jobs(active,first_seen);
+INSERT OR IGNORE INTO sources(provider,slug,company) VALUES ('greenhouse','stone','Stone'),('greenhouse','ebanx','EBANX'),('lever','dlocal','dLocal'),('linkedin','brasil-remoto','Busca pública LinkedIn'),('indeed','brasil-remoto','Busca pública Indeed');
