@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
-import worker, { syncSource, verifyJob } from '../src/worker.js';
+import worker, { syncSource, verifyJob, runSearch } from '../src/worker.js';
 import { assess, contracts, eligibility, normalize, sourceURL, safeJobURL, validateProfile } from '../src/domain.js';
+
+import { normalizeGupy, normalizeIssue, gupyQueries, issueURL } from '../src/brazil-sources.js';
 
 const profile = { roles:['developer','full-stack'], skills:['React','Node.js'], levels:['pleno','junior'], exclude:[], contracts:['CLT','PJ','Estágio'], minSalary:0 };
 const base = { id:'test', title:'Full-stack Developer Pleno', company:'Empresa teste', location:'Remote - Brazil', description:'React and Node.js. CLT.', workplace:'remote', url:'https://jobs.lever.co/test/1' };
@@ -192,4 +194,67 @@ test('public collection stops immediately when a detail request is rate limited'
   let requests=0;
   const result=await syncSource(environment,linked,async url=>{requests++;return url.includes('seeMoreJobPostings')?new Response(card('123')+card('456')):new Response('',{status:429});});
   assert.equal(result.ok,false);assert.equal(requests,2);assert.match(result.error,/429/);
+});
+
+const gupyJob = id => ({id,name:'Desenvolvedor React Pleno',careerPageName:'Empresa teste',state:'RS',workplaceType:'remote',description:'React Node.js. CLT.',publishedDate:'2026-10-01',jobUrl:`https://teste.gupy.io/jobs/${id}`});
+test('Gupy requires Brazilian evidence, preserves full descriptions and rejects expired deadlines',()=>{
+  const job=normalizeGupy({...gupyJob(1),description:'React\n'+ 'descrição completa '.repeat(3000)});
+  assert.equal(eligibility(job).eligible,true);assert.ok(job.description.length>40000);
+  assert.equal(eligibility(normalizeGupy({...gupyJob(1),state:'',description:'React'})).eligible,false);
+  const clt=normalizeGupy({...gupyJob(1),state:''});
+  assert.equal(eligibility(clt).eligible,true);assert.match(clt.details.brazilBasis,/CLT/);
+  assert.equal(eligibility(normalizeGupy({...gupyJob(1),applicationDeadline:'2020-01-01'})).expired,true);
+  assert.deepEqual(gupyQueries({focusSkills:['Node.js','React','NestJS','AWS']}),['Node','React','NestJS']);
+});
+test('community sections keep location, company and instructions without fabricating employers',()=>{
+  const raw={number:123,title:'[Remoto] Desenvolvedor React na Empresa Exemplo',body:'## Nossa empresa\nEmpresa Exemplo\n## Local\nRemoto - Porto Alegre / RS\n## Requisitos\nReact e Node.js. CLT.\n## Como se candidatar\nEnviar currículo no link da empresa.',created_at:new Date().toISOString(),state:'open',html_url:'https://github.com/frontendbr/vagas/issues/123',user:{login:'autor'}};
+  const issue=normalizeIssue(raw);
+  assert.match(issue.location,/Porto Alegre/);assert.equal(issue.company,'Empresa Exemplo');
+  assert.match(issue.details.applicationInstructions,/Enviar currículo/);
+  assert.equal(issue.details.employerVerified,false);assert.equal(issue.details.publisher,'autor');
+  assert.equal(eligibility(issue).eligible,true);
+  assert.equal(normalizeIssue({...raw,title:'[Remoto] React',body:'React'}).company,'Empresa não identificada na publicação');
+  assert.throws(()=>issueURL('../internal','123'));
+  assert.equal(safeJobURL('https://teste.gupy.io/jobs/1','gupy'),true);
+  assert.equal(safeJobURL('https://teste.gupy.io.evil.com/jobs/1','gupy'),false);
+  assert.equal(safeJobURL(raw.html_url,'github'),true);
+});
+test('Gupy partial results do not close absent jobs; individual absence remains inconclusive',async()=>{
+  const environment=env();const gupy=await environment.DB.prepare("SELECT * FROM sources WHERE provider='gupy'").first();
+  assert.equal((await syncSource(environment,gupy,async()=>Response.json({data:[gupyJob(1),gupyJob(2)]})) ).count,2);
+  assert.equal((await syncSource(environment,gupy,async()=>Response.json({data:[gupyJob(1)]}))).count,1);
+  const id='gupy:brasil-remoto:2';
+  assert.equal((await verifyJob(environment,id,async()=>Response.json({data:[]}))).ok,false);
+  assert.equal((await environment.DB.prepare('SELECT active FROM jobs WHERE id=?').bind(id).first()).active,1);
+});
+test('community closure is recognized and stale or pull request entries are never imported',async()=>{
+  const environment=env();const github=await environment.DB.prepare("SELECT * FROM sources WHERE provider='github' ORDER BY id LIMIT 1").first();
+  const issue={number:123,title:'[Remoto Brasil] Desenvolvedor React Pleno',body:'React Node.js',created_at:new Date().toISOString(),state:'open',html_url:`https://github.com/${github.slug}/issues/123`};
+  const result=await syncSource(environment,github,async()=>Response.json([issue,{...issue,number:124,pull_request:{}},{...issue,number:125,created_at:'2020-01-01'}]));
+  assert.equal(result.count,1);
+  const id=`github:${github.slug}:123`;
+  assert.equal((await verifyJob(environment,id,async()=>Response.json({...issue,state:'closed'}))).status,'closed');
+  assert.equal((await environment.DB.prepare('SELECT active FROM jobs WHERE id=?').bind(id).first()).active,0);
+});
+test('new searches use constrained sources, cache identical queries and throttle different queries',async()=>{
+  const environment=env();let calls=0;
+  const fetcher=async url=>{calls++;assert.ok(url.startsWith('https://portal.gupy.io/')||url.startsWith('https://api.github.com/repos/'));return Response.json(url.includes('gupy')?{data:[gupyJob(1)]}:[]);};
+  const first=await runSearch(environment,' React ',fetcher);assert.equal(first.ok,true);assert.equal(calls,4);
+  assert.equal((await runSearch(environment,'react',fetcher)).cached,true);assert.equal(calls,4);
+  assert.equal((await runSearch(environment,'Node.js',fetcher)).ok,false);assert.equal(calls,4);
+  assert.equal((await worker.fetch(request('search','POST',{query:'React'}),environment)).status,401);
+});
+test('mobile roles do not pass a web-only React profile',()=>{
+  const focused={...profile,focusSkills:['React']};
+  assert.equal(assess({...base,title:'Desenvolvedor React Native',description:'React Node.js'}, {...focused,roles:['desenvolvedor']}).compatible,false);
+});
+test('aggregator migration preserves verified jobs, favorites and foreign keys',()=>{
+  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');
+  for(const file of readdirSync(new URL('../migrations/',import.meta.url)).filter(x=>x.endsWith('.sql')&&x<'0009').sort())db.exec(readFileSync(new URL(`../migrations/${file}`,import.meta.url),'utf8'));
+  db.exec("INSERT INTO jobs(id,source_id,title,company,location,description,url,workplace,first_seen,last_seen,details,checked_at,check_status) VALUES('existing',2,'React','Company','Brazil','React','https://jobs.lever.co/cloudwalk/1','remote','2026-10-01','2026-10-01','{\"department\":\"Engineering\"}','2026-10-01','confirmed'); INSERT INTO saved VALUES('existing','saved','2026-10-01');");
+  db.exec('BEGIN;'+readFileSync(new URL('../migrations/0009_brazilian_aggregators.sql',import.meta.url),'utf8')+'COMMIT;');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM jobs JOIN sources ON sources.id=jobs.source_id').get().n,1);
+  assert.equal(db.prepare('SELECT check_status FROM jobs').get().check_status,'confirmed');
+  assert.equal(db.prepare('SELECT status FROM saved').get().status,'saved');
+  assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
 });

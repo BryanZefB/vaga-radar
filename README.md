@@ -12,6 +12,8 @@ Aplicação para acompanhar vagas explicitamente remotas e disponíveis para tra
 - Datas de publicação ausentes nunca são substituídas por datas de coleta. Não interpretamos `full-time` automaticamente como CLT.
 - O perfil profissional é editável. O currículo fornecido indica 2+ anos de desenvolvimento, Node.js/NestJS, React, TypeScript, PostgreSQL e AWS. O PDF não é armazenado no aplicativo nem enviado aos portais.
 
+A barra **Buscar vagas** consulta a API pública do portal Gupy pelo cargo/tecnologia informado e atualiza as comunidades quando estiverem no intervalo permitido. Com a busca vazia, usa até três tecnologias principais do perfil. Atalhos React, Node.js, NestJS e Full Stack facilitam consultas. A digitação também filtra a base local. Os resultados têm paginação de 20 vagas. Publicações de comunidades que informam a mesma página específica de vaga são agrupadas, com os links de origem preservados nos detalhes. Uma busca igual usa cache de 15 minutos; buscas novas têm intervalo de um minuto para preservar cotas gratuitas.
+
 ## Descrição e informações completas
 
 Clique em **Descrição completa e todas as informações** em qualquer vaga. A janela mostra o texto integral disponibilizado pela fonte, requisitos e benefícios incluídos nesse texto, localização original, contratação, departamento, datas, remuneração estruturada, evidências de Brasil/remoto, motivos da aderência, dados complementares e link original. Descrições não são cortadas em 40 mil caracteres.
@@ -20,13 +22,17 @@ Campos que a fonte não informa aparecem como não informados. Não inventamos s
 
 ## Fontes
 
-O banco inicial inclui páginas públicas de carreira em Greenhouse/Lever (Nubank, CloudWalk, Wellhub, CI&T, Stone, EBANX e dLocal), além de buscas públicas de LinkedIn e Indeed. A sugestão antiga Truelogic permanece pausada após HTTP 404. Fontes sem vagas elegíveis continuam mostrando zero; a existência de uma página de carreira não implica haver oportunidades para este perfil.
+O banco inicial inclui páginas públicas de carreira em Greenhouse/Lever (Nubank, CloudWalk, Wellhub, CI&T, Stone, EBANX e dLocal), além de buscas públicas de Gupy, LinkedIn, Indeed e comunidades FrontendBR, BackendBR e React Brasil no GitHub. A sugestão antiga Truelogic permanece pausada após HTTP 404. Fontes sem vagas elegíveis continuam mostrando zero; a existência de uma página de carreira não implica haver oportunidades para este perfil.
+
+**Gupy** usa a API pública do próprio portal, com modalidade remota e até 50 resultados por termo. Não depende do servidor do site usado como referência. País não é inferido apenas pelo domínio Gupy: exige país/estado brasileiro, evidência explícita de Brasil ou contexto de contratação CLT, cuja origem fica identificada nos detalhes. Prazos de candidatura informados e vencidos retiram o anúncio do radar.
+
+**Comunidades GitHub** consultam publicações abertas dos últimos 90 dias. A descrição e as instruções de candidatura são preservadas. Uma issue aberta confirma somente a existência da publicação; autor e empresa não são autenticados. O cartão indica essa diferença. Nenhuma empresa é inventada quando o anúncio não informa seu nome. Ausências nas consultas parciais da Gupy e das comunidades não encerram registros; a confirmação individual distingue indisponibilidade de encerramento.
 
 **LinkedIn e Indeed têm conectores reais de páginas públicas**, sem conta, cookies de login, execução de JavaScript remoto, contorno de CAPTCHA ou de bloqueios. As consultas usam os termos profissionais do perfil, Brasil, modalidade remota e parâmetros de data. O sistema lê até 10 descrições acessíveis por consulta, após excluir títulos acima dos níveis selecionados. Uma busca não representa todo o portal, e os filtros do portal são reconferidos na descrição/campos publicados: um resultado em uma busca por remoto pode ser híbrido e ficar fora do radar.
 
 Bloqueios, login obrigatório, HTTP 403/429, formato alterado ou descrição indisponível geram diagnóstico. O sistema não simula resultados nem importa apenas título sem a descrição. Em **Fontes de vagas**, o botão para a busca original permite consultar o portal diretamente. LinkedIn/Indeed podem limitar o acesso a partir da Cloudflare mesmo quando as páginas respondem em outro ambiente.
 
-Há até 12 fontes cadastradas. O cron executa a cada hora e consulta até 5 fontes em rodízio; cada fonte tem intervalo mínimo de 110 minutos entre tentativas. O botão de atualização respeita os mesmos limites. As APIs de Lever são paginadas; fontes muito grandes são interrompidas com diagnóstico, em vez de importar uma lista incompleta e encerrar vagas por engano. A remoção de um resultado de uma busca parcial de LinkedIn/Indeed **não** significa encerramento.
+Há até 16 fontes cadastradas. O cron executa a cada hora e consulta até 5 fontes em rodízio; cada fonte tem intervalo mínimo de 110 minutos entre tentativas. O botão de atualização respeita os mesmos limites. As APIs de Lever são paginadas; fontes muito grandes são interrompidas com diagnóstico, em vez de importar uma lista incompleta e encerrar vagas por engano. A remoção de um resultado de uma busca parcial de LinkedIn/Indeed **não** significa encerramento.
 
 ## O que a verificação confirma
 
@@ -37,6 +43,8 @@ Há até 12 fontes cadastradas. O cron executa a cada hora e consulta até 5 fon
 - **País/modalidade não confirmados:** a revisão individual não confirmou os critérios, sem presumir que o anúncio foi encerrado.
 
 O radar exige evidência de Brasil (país informado, localização brasileira inequívoca, título ou residência explicitamente requerida) e de remoto (campo estruturado, localização, título ou declaração clara do modelo). Híbrido/presencial e restrições explícitas incompatíveis ficam fora. LATAM/worldwide sem Brasil continua inconclusivo. Uma empresa brasileira não basta para inferir que uma vaga pode ser exercida no Brasil.
+
+Na Gupy a confirmação individual procura o identificador na busca pública pelo título; se a busca parcial não o retornar, o estado fica inconclusivo. Nas comunidades, a consulta individual também reconhece issues encerradas.
 
 A confirmação é da **presença e dos dados do anúncio**, não uma garantia absoluta de legitimidade, identidade do recrutador ou contratação. Confira empresa, domínio e processo e não pague para participar. Não prometemos exclusividade nem descobrir uma vaga antes de todas as outras pessoas. Registros sem presença recente na origem (6 horas) saem do radar; favoritos preservam o histórico com o estado disponível.
 

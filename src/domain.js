@@ -20,8 +20,12 @@ export function eligibility(job) {
   const cityState=/\b(?:sao paulo|rio de janeiro|florianopolis|curitiba|porto alegre|belo horizonte|recife|fortaleza|salvador|brasilia|campinas|joinville|sao jose dos campos)\s*[,/\-]\s*(?:sp|rj|sc|pr|rs|mg|pe|ce|ba|df)\b/.test(location);
   const brazil=/\b(brasil|brazil|br)\b/.test(location)||/\b(brasil|brazil)\b/.test(title)||fold(job.country)==='br'||cityState||/\b(?:residir|residente|residencia|contratacao|contratar)\s+(?:no|em|para o)\s+brasil\b/.test(description);
   const blocked=/\b(?:only|somente|apenas)\s+(?:us|usa|united states|europe|eu)\b/.test(`${location} ${description}`)||/\b(?:nao|not)\s+(?:e\s+|is\s+)?(?:remot[oa]|remote)\b/.test(`${location} ${model}`)||/\bmust[^\n.]{0,20}(?:reside|be based|be located)[^\n.]{0,20}(?:united states|usa|europe)\b/.test(description);
+  let details=job.details||{};if(typeof details==='string'){try{details=JSON.parse(details);}catch{details={};}}
+  const deadline=details.deadline;
+  const deadlineMs=typeof deadline==='string'?Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(deadline)?deadline+'T23:59:59Z':deadline):NaN;
+  const expired=Number.isFinite(deadlineMs)&&deadlineMs<Date.now();
   const remoteEvidence=job.workplace==='remote'?'Modalidade remota no campo estruturado':remoteWord.test(location)?`Localização: ${job.location}`:remoteWord.test(title)?`Título: ${job.title}`:model||'Declaração explícita de trabalho totalmente remoto';
-  return {eligible:remote&&!hybrid&&brazil&&!blocked,remote,brazil,hybrid,blocked,remoteEvidence:remote?remoteEvidence:null,brazilEvidence:brazil?(cityState?`Cidade e UF brasileiras: ${job.location}`:/\b(brasil|brazil|br)\b/.test(location)?`Localização: ${job.location}`:'País BR ou residência no Brasil explicitamente informados'):null};
+  return {eligible:remote&&!hybrid&&brazil&&!blocked&&!expired,remote,brazil,hybrid,blocked,expired,remoteEvidence:remote?remoteEvidence:null,brazilEvidence:brazil?(cityState?`Cidade e UF brasileiras: ${job.location}`:/\b(brasil|brazil|br)\b/.test(location)?`Localização: ${job.location}`:'País BR ou residência no Brasil explicitamente informados'):null};
 }
 export function contracts(job) {
   const text = fold(`${job.title} ${job.location} ${job.description}`);
@@ -37,7 +41,7 @@ export function assess(job, profile) {
   const roleMatches = profile.roles.filter(term => has(title, term));
   const skillMatches = profile.skills.filter(term => has(text, term));
   const focusMatches = (profile.focusSkills || []).filter(term => has(text, term));
-  const titleSkillGaps = (profile.focusSkills || []).length ? ['Java','Angular','Python','Kotlin','Golang','PHP','Ruby','Go'].filter(term => has(title, term) && !profile.skills.some(skill => fold(skill) === fold(term))) : [];
+  const titleSkillGaps = (profile.focusSkills || []).length ? ['Java','Angular','Python','Kotlin','Golang','PHP','Ruby','Go','React Native','React-Native','Flutter','Swift','Android','iOS'].filter(term => has(title, term) && !profile.skills.some(skill => fold(skill).replace(/[-. ]/g,'') === fold(term).replace(/[-. ]/g,''))) : [];
   const excluded = profile.exclude.filter(term => has(text, term));
   const levelMatches = profile.levels.filter(term => has(text, term));
   const seniorTitle = /\b(senior|sr|staff|principal|lead|lider|manager|head|director|diretor|diretora|gerente|coordenador|coordenadora|supervisor|supervisora|master|expert|especialista|architect|arquiteto)\b/.test(title);
@@ -58,12 +62,13 @@ export function assess(job, profile) {
   if(typeof details==='string'){try{details=JSON.parse(details);}catch{details={};}}
   const titleLevel=/\b(?:senior|sr|staff|principal|lead|manager|master|especialista|gerente)\b/.test(title)?'senior':/\b(?:pleno|mid[ -]?level|mid|intermediate)\b/.test(title)?'pleno':/\b(?:junior|jr|entry[ -]?level)\b/.test(title)?'junior':/\b(?:estagio|intern|estagiario)\b/.test(title)?'estagio':'unknown';
   const fresh=job.active && job.source_enabled!==0 && !job.source_error && job.last_seen && Date.now()-Date.parse(job.last_seen)<6*3600000;
-  const verification={status:job.check_status==='ineligible'?'ineligible':!job.active||job.check_status==='closed'?'closed':!fresh||job.check_status==='unconfirmed'?'unconfirmed':job.check_status==='confirmed'&&job.checked_at&&Date.now()-Date.parse(job.checked_at)<6*3600000?'confirmed':'listed',listedAt:job.last_seen||null,checkedAt:job.checked_at||null};
+  const rules=eligibility(job);
+  const verification={status:rules.expired?'expired':job.check_status==='ineligible'?'ineligible':!job.active||job.check_status==='closed'?'closed':!fresh||job.check_status==='unconfirmed'?'unconfirmed':job.check_status==='confirmed'&&job.checked_at&&Date.now()-Date.parse(job.checked_at)<6*3600000?'confirmed':'listed',listedAt:job.last_seen||null,checkedAt:job.checked_at||null};
   return { ...job, details, titleLevel, verification, kinds, score, roleMatches, skillMatches, focusMatches, titleSkillGaps, excluded, levelMatches, contractMatch, minimumExperienceYears, experienceConflict,
     levelConflict,
     compatible: configured && !experienceConflict && titleSkillGaps.length === 0 && (!(profile.focusSkills || []).length || focusMatches.length > 0) && (!profile.roles.length || roleMatches.length > 0) && (!profile.skills.length || skillMatches.length > 0) && !levelConflict && excluded.length === 0 && contractMatch,
     salaryNote: profile.minSalary ? 'Salário mínimo não verificado: confira valor, moeda e período no anúncio.' : null,
-    eligibility: eligibility(job) };
+    eligibility: rules };
 }
 export function validateProfile(value) {
   const result = {};
@@ -82,7 +87,7 @@ export function validateProfile(value) {
   return result;
 }
 export function normalize(provider, raw, source) {
-  if(provider==='linkedin'||provider==='indeed') return {...raw,id:`${provider}:${source.slug}:${raw.id}`,source_id:source.id,details:raw.details||{}};
+  if(['linkedin','indeed','gupy','github'].includes(provider)) return {...raw,id:`${provider}:${source.slug}:${raw.id}`,source_id:source.id,details:raw.details||{}};
   if (provider === 'lever') return {
     id: `lever:${source.slug}:${raw.id}`, source_id: source.id, company: source.company,
     title: plain(raw.text), location: plain(raw.categories?.location), workplace: raw.workplaceType || '',
@@ -100,9 +105,17 @@ export function normalize(provider, raw, source) {
   };
 }
 export function sourceURL(source) {
+  if(source.provider==='github'){
+    if(!/^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9][a-z0-9_.-]{0,99}$/i.test(source.slug||''))throw new Error('Repositório inválido.');
+    return `https://api.github.com/repos/${source.slug}/issues?state=open&sort=created&direction=desc&per_page=100`;
+  }
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(source.slug)) throw new Error('Identificador de fonte inválido.');
   if (source.provider === 'lever') return `https://api.lever.co/v0/postings/${source.slug}?mode=json&limit=100&skip=0`;
   if (source.provider === 'greenhouse') return `https://boards-api.greenhouse.io/v1/boards/${source.slug}/jobs?content=true`;
+  if(source.provider==='gupy'){
+    if(source.slug!=='brasil-remoto')throw new Error('Identificador público inválido.');
+    return 'https://portal.gupy.io/api/job-search/jobs';
+  }
   if (source.provider === 'linkedin' || source.provider === 'indeed') {
     if(source.slug!=='brasil-remoto') throw new Error('Identificador público inválido.');
     return source.provider==='linkedin'?'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search':'https://br.indeed.com/jobs';
@@ -112,6 +125,8 @@ export function sourceURL(source) {
 export function safeJobURL(url, provider) {
   try {
     const parsed = new URL(url);
+    if(provider==='gupy')return parsed.protocol==='https:'&&!parsed.username&&!parsed.password&&parsed.hostname.endsWith('.gupy.io')&&/^\/jobs?\/[^/]+/.test(parsed.pathname);
+    if(provider==='github')return parsed.protocol==='https:'&&!parsed.username&&!parsed.password&&parsed.hostname==='github.com'&&/^\/[a-z0-9_.-]+\/[a-z0-9_.-]+\/issues\/\d+$/i.test(parsed.pathname);
     if(provider==='linkedin') return parsed.protocol==='https:'&&!parsed.username&&!parsed.password&&['www.linkedin.com','br.linkedin.com'].includes(parsed.hostname)&&/^\/jobs\/view\//.test(parsed.pathname);
     if(provider==='indeed') return parsed.protocol==='https:'&&!parsed.username&&!parsed.password&&parsed.hostname==='br.indeed.com'&&parsed.pathname==='/viewjob'&&/^[a-f0-9]{16}$/.test(parsed.searchParams.get('jk')||'');
     const publicHost = parsed.hostname.includes('.') && !/^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[)/.test(parsed.hostname) && !/\.(local|internal|localhost)$/.test(parsed.hostname);

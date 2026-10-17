@@ -1,0 +1,11 @@
+CREATE TABLE sources_next (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL CHECK(provider IN ('lever','greenhouse','linkedin','indeed','gupy','github')), slug TEXT NOT NULL, company TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_sync TEXT, error TEXT, last_attempt TEXT, warning TEXT, UNIQUE(provider,slug));
+INSERT INTO sources_next SELECT * FROM sources;
+CREATE TABLE jobs_next (id TEXT PRIMARY KEY, source_id INTEGER NOT NULL, title TEXT NOT NULL, company TEXT NOT NULL, location TEXT NOT NULL, description TEXT NOT NULL, url TEXT NOT NULL, workplace TEXT NOT NULL, published TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, details TEXT NOT NULL DEFAULT '{}', checked_at TEXT, check_status TEXT NOT NULL DEFAULT 'listed', FOREIGN KEY(source_id) REFERENCES sources_next(id));
+INSERT INTO jobs_next SELECT * FROM jobs;
+DROP TABLE jobs;
+DROP TABLE sources;
+ALTER TABLE sources_next RENAME TO sources;
+ALTER TABLE jobs_next RENAME TO jobs;
+CREATE INDEX jobs_active ON jobs(active,first_seen);
+INSERT OR IGNORE INTO sources(provider,slug,company) VALUES ('gupy','brasil-remoto','Gupy — busca Brasil'),('github','frontendbr/vagas','FrontendBR'),('github','backend-br/vagas','BackendBR'),('github','react-brasil/vagas','React Brasil');
+CREATE TABLE search_requests(query TEXT PRIMARY KEY,requested_at INTEGER NOT NULL);

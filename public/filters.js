@@ -1,4 +1,4 @@
-export const providerName = value => ({lever:'Lever',greenhouse:'Greenhouse',linkedin:'LinkedIn',indeed:'Indeed'}[value]||value||'Fonte');
+export const providerName = value => ({lever:'Lever',greenhouse:'Greenhouse',linkedin:'LinkedIn',indeed:'Indeed',gupy:'Gupy',github:'Comunidades GitHub'}[value]||value||'Fonte');
 const folded=value=>String(value||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();
 export function hasSalary(salary){
   if(!salary) return false;
@@ -10,7 +10,7 @@ export function filterJobs(jobs,filters,now=Date.now()){
   return jobs.filter(job=>{
     if(filters.mode==='matches'&&!job.compatible) return false;
     const text=folded(`${job.title} ${job.company} ${job.description}`);
-    if(filters.query&&!text.includes(folded(filters.query))) return false;
+    if(filters.query&&!folded(filters.query).split(/[\s,]+/).filter(Boolean).every(term=>text.includes(term))) return false;
     if(filters.company&&job.company!==filters.company) return false;
     if(filters.provider&&job.provider!==filters.provider) return false;
     if(filters.level&&job.titleLevel!==filters.level) return false;
@@ -26,4 +26,20 @@ export function filterJobs(jobs,filters,now=Date.now()){
     if(filters.discovered&&(!job.first_seen||now-Date.parse(job.first_seen)>Number(filters.discovered)*86400000)) return false;
     return true;
   }).sort((a,b)=>filters.sort==='new'?b.first_seen.localeCompare(a.first_seen):filters.sort==='published'?(Date.parse(b.published)||0)-(Date.parse(a.published)||0):filters.sort==='company'?a.company.localeCompare(b.company,'pt-BR'):(b.score||0)-(a.score||0)||b.first_seen.localeCompare(a.first_seen));
+}
+// Merge community cross-posts only when they explicitly share a specific job page.
+export function groupJobs(jobs){
+  const groups=new Map();
+  for(const job of jobs){
+    let key=job.id;
+    const page=job.provider==='github'&&job.description.match(/p[áa]gina da vaga\s*:\s*(https:\/\/[^\s)<>]+)/i)?.[1];
+    if(page){try{const url=new URL(page);if(url.pathname!=='/'&&!url.username&&!url.password)key=`community:${url.origin}${url.pathname.replace(/\/$/,'')}:${job.titleLevel}`;}catch{}}
+    const existing=groups.get(key);
+    const post={id:job.id,title:job.title,url:job.url,source:job.slug};
+    if(existing){
+      existing.relatedPosts.push(post);
+      if(job.status&&!existing.status){const relatedPosts=existing.relatedPosts;groups.set(key,{...job,relatedPosts});}
+    }else groups.set(key,{...job,relatedPosts:[post]});
+  }
+  return [...groups.values()];
 }

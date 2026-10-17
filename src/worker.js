@@ -1,5 +1,6 @@
 import { assess, eligibility, normalize, sourceURL, safeJobURL, validateProfile } from './domain.js';
 import { linkedInCards, indeedCards, linkedInDetail, indeedDetail, discoveryQuery, publicSearchURL, publicDetailURL } from './public-sources.js';
+import { normalizeGupy, normalizeIssue, gupyQueries, gupyURL, issueURL } from './brazil-sources.js';
 
 const encoder = new TextEncoder();
 const json = (value, status = 200, extra = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
@@ -36,7 +37,7 @@ async function body(request) {
 function cookie(request, value, maxAge) {
   return `session=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${new URL(request.url).protocol === 'https:' ? '; Secure' : ''}`;
 }
-export async function syncSource(env, source, fetcher = fetch) {
+export async function syncSource(env, source, fetcher = fetch, searchQuery='') {
   const time = stamp();
   try {
     await env.DB.prepare('UPDATE sources SET last_attempt=? WHERE id=?').bind(time,source.id).run();
@@ -50,8 +51,23 @@ export async function syncSource(env, source, fetcher = fetch) {
       return html?text:JSON.parse(text);
     };
     const publicBoard=['linkedin','indeed'].includes(source.provider);
+    const partialBoard=publicBoard||['gupy','github'].includes(source.provider);
     let records, warning=null;
-    if(publicBoard){
+    if(source.provider==='gupy'){
+      const profile=await readProfile(env);const terms=gupyQueries(profile,searchQuery);const found=[];
+      for(const term of terms){
+        const data=await read(gupyURL(term));
+        if(!Array.isArray(data.data))throw new Error('Formato público da Gupy mudou.');
+        found.push(...data.data);
+      }
+      records=[...new Map(found.map(raw=>[String(raw.id),normalizeGupy(raw)])).values()];
+      warning=`Busca parcial Gupy: ${terms.join(', ')}. Até 50 resultados por termo; ausências não significam encerramento.`;
+    }else if(source.provider==='github'){
+      const data=await read(sourceURL(source));
+      if(!Array.isArray(data))throw new Error('Formato público da comunidade mudou.');
+      records=data.filter(raw=>!raw.pull_request&&raw.state==='open'&&Number.isFinite(Date.parse(raw.created_at))&&Date.now()-Date.parse(raw.created_at)<=90*86400000).map(normalizeIssue);
+      warning='Publicações abertas da comunidade, com até 90 dias. O autor e a empresa não são verificados pelo sistema.';
+    }else if(publicBoard){
       const profile=await readProfile(env);
       const html=await read(publicSearchURL(source.provider,discoveryQuery(profile)),true);
       const cards=(source.provider==='linkedin'?linkedInCards:indeedCards)(html);
@@ -92,7 +108,7 @@ export async function syncSource(env, source, fetcher = fetch) {
     // D1 limits batch sizes: mark closed only after every import batch succeeds.
     for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
     const completion=[env.DB.prepare('UPDATE sources SET last_sync=?,error=NULL,warning=? WHERE id=?').bind(time,warning,source.id)];
-    if(!publicBoard) completion.push(env.DB.prepare('UPDATE jobs SET active=0 WHERE source_id=? AND last_seen<>?').bind(source.id,time));
+    if(!partialBoard) completion.push(env.DB.prepare('UPDATE jobs SET active=0 WHERE source_id=? AND last_seen<>?').bind(source.id,time));
     await env.DB.batch(completion);
     return { id: source.id, ok: true, count: jobs.length };
   } catch (error) {
@@ -120,17 +136,30 @@ export async function verifyJob(env,id,fetcher=fetch){
   const externalId=job.id.split(':').pop();
   const source={id:job.source_id,provider:job.provider,slug:job.slug,company:job.company};
   const publicBoard=['linkedin','indeed'].includes(job.provider);
-  const url=publicBoard?publicDetailURL(job.provider,externalId):job.provider==='lever'?`https://api.lever.co/v0/postings/${encodeURIComponent(job.slug)}/${encodeURIComponent(externalId)}?mode=json`:`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(job.slug)}/jobs/${encodeURIComponent(externalId)}?content=true`;
+  const url=job.provider==='gupy'?gupyURL(job.title):job.provider==='github'?issueURL(job.slug,externalId):publicBoard?publicDetailURL(job.provider,externalId):job.provider==='lever'?`https://api.lever.co/v0/postings/${encodeURIComponent(job.slug)}/${encodeURIComponent(externalId)}?mode=json`:`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(job.slug)}/jobs/${encodeURIComponent(externalId)}?content=true`;
   const time=stamp();
   try{
     const response=await fetcher(url,{headers:{'user-agent':'VagaRadar-Personal/1.0'},signal:AbortSignal.timeout(10000)});
-    if([404,410].includes(response.status)){
+    if(job.provider!=='gupy'&&[404,410].includes(response.status)){
       await env.DB.prepare("UPDATE jobs SET active=0,checked_at=?,check_status='closed' WHERE id=?").bind(time,id).run();
       return {ok:true,status:'closed'};
     }
     if(!response.ok) throw new Error('Fonte indisponível.');
     let raw;
-    if(publicBoard){
+    if(job.provider==='gupy'){
+      const data=await response.json();
+      const found=data.data?.find(item=>String(item.id)===externalId);
+      if(!found)throw new Error('Busca parcial não localizou o anúncio; não confirma encerramento.');
+      raw=normalizeGupy(found);
+    }else if(job.provider==='github'){
+      const issue=await response.json();
+      if(issue.state==='closed'){
+        await env.DB.prepare("UPDATE jobs SET active=0,checked_at=?,check_status='closed' WHERE id=?").bind(time,id).run();
+        return {ok:true,status:'closed'};
+      }
+      if(issue.pull_request||issue.state!=='open')throw new Error('Publicação de comunidade inválida.');
+      raw=normalizeIssue(issue);
+    }else if(publicBoard){
       const html=await response.text();
       if(/no longer accepting applications|no longer available|não aceita mais candidaturas/i.test(plainPublic(html))){
         await env.DB.prepare("UPDATE jobs SET active=0,checked_at=?,check_status='closed' WHERE id=?").bind(time,id).run();
@@ -141,13 +170,33 @@ export async function verifyJob(env,id,fetcher=fetch){
     const normalized=normalize(job.provider,raw,source);
     if(normalized.id!==job.id||!normalized.title||!normalized.description||!safeJobURL(normalized.url,job.provider)) throw new Error('Dados inconsistentes.');
     await jobStatement(env,normalized,time).run();
-    const eligible=eligibility(normalized).eligible;
-    await env.DB.prepare('UPDATE jobs SET active=?,checked_at=?,check_status=? WHERE id=?').bind(eligible?1:0,time,eligible?'confirmed':'ineligible',id).run();
-    return {ok:true,status:eligible?'confirmed':'ineligible'};
+    const rules=eligibility(normalized);const status=rules.eligible?'confirmed':rules.expired?'expired':'ineligible';
+    await env.DB.prepare('UPDATE jobs SET active=?,checked_at=?,check_status=? WHERE id=?').bind(rules.eligible?1:0,time,status,id).run();
+    return {ok:true,status};
   }catch{
     await env.DB.prepare("UPDATE jobs SET checked_at=?,check_status='unconfirmed' WHERE id=?").bind(time,id).run();
     return {ok:false,error:'Não foi possível reconfirmar esta vaga. O provedor pode estar indisponível ou exigir login.'};
   }
+}
+export async function runSearch(env,query,fetcher=fetch){
+  const key=query.trim().toLowerCase().replace(/\s+/g,' ');const now=Date.now();
+  const cached=await env.DB.prepare('SELECT requested_at FROM search_requests WHERE query=?').bind(key).first();
+  if(cached&&now-cached.requested_at<15*60000)return {ok:true,cached:true,results:[]};
+  const latest=await env.DB.prepare('SELECT MAX(requested_at) AS last FROM search_requests').first();
+  if(latest?.last&&now-latest.last<60000)return {ok:false,error:'Aguarde um minuto entre buscas novas.'};
+  const lease=now+600000;
+  const lock=await env.DB.prepare('UPDATE sync_lock SET until_ms=? WHERE id=1 AND until_ms<? RETURNING id').bind(lease,now).first();
+  if(!lock)return {ok:false,error:'Já existe uma coleta em andamento. Aguarde.'};
+  try{
+    const source=await env.DB.prepare("SELECT * FROM sources WHERE provider='gupy' AND enabled=1").first();
+    if(!source)return {ok:false,error:'Ative a fonte Gupy para buscar vagas novas.'};
+    await env.DB.prepare('INSERT INTO search_requests(query,requested_at) VALUES(?,?) ON CONFLICT(query) DO UPDATE SET requested_at=excluded.requested_at').bind(key,now).run();
+    const results=[await syncSource(env,source,fetcher,query)];
+    const communities=(await env.DB.prepare("SELECT * FROM sources WHERE provider='github' AND enabled=1 ORDER BY id").all()).results;
+    for(const community of communities){if(!community.last_attempt||now-Date.parse(community.last_attempt)>=110*60000)results.push(await syncSource(env,community,fetcher));}
+    await env.DB.prepare('DELETE FROM search_requests WHERE requested_at<?').bind(now-86400000).run();
+    return {ok:results.some(result=>result.ok),cached:false,results};
+  }finally{await env.DB.prepare('UPDATE sync_lock SET until_ms=0 WHERE id=1 AND until_ms=?').bind(lease).run();}
 }
 async function syncAll(env, force = false) {
   const lease = Date.now() + 600000;
@@ -197,6 +246,12 @@ async function api(request, env, ctx) {
     const result=await verifyJob(env,id);
     return json(result,result.ok?200:502);
   }
+  if(path==='/api/search'&&request.method==='POST'){
+    const {query=''}=await body(request);
+    if(typeof query!=='string'||query.length>80)throw new Error('Busca inválida: use até 80 caracteres.');
+    const result=await runSearch(env,query);
+    return json(result,result.ok?200:409);
+  }
   if (path === '/api/jobs' && request.method === 'GET') {
     const profile = await readProfile(env);
     const { results } = await env.DB.prepare('SELECT jobs.*,saved.status,sources.provider,sources.slug,sources.enabled AS source_enabled,sources.error AS source_error,sources.last_sync AS source_sync FROM jobs LEFT JOIN saved ON saved.job_id=jobs.id JOIN sources ON sources.id=jobs.source_id ORDER BY first_seen DESC LIMIT 3000').all();
@@ -204,14 +259,14 @@ async function api(request, env, ctx) {
   }
   if (path === '/api/sources' && request.method === 'GET') {
     const profile=await readProfile(env);
-    return json((await env.DB.prepare('SELECT * FROM sources ORDER BY id').all()).results.map(source=>({...source,searchUrl:source.provider==='linkedin'?publicSearchURL(source.provider,discoveryQuery(profile)).replace('/jobs-guest/jobs/api/seeMoreJobPostings/search','/jobs/search'):source.provider==='indeed'?publicSearchURL(source.provider,discoveryQuery(profile)):source.provider==='lever'?`https://jobs.lever.co/${source.slug}`:`https://job-boards.greenhouse.io/${source.slug}`})));
+    return json((await env.DB.prepare('SELECT * FROM sources ORDER BY id').all()).results.map(source=>({...source,searchUrl:source.provider==='gupy'?'https://portal.gupy.io/job-search/jobs':source.provider==='github'?`https://github.com/${source.slug}/issues`:source.provider==='linkedin'?publicSearchURL(source.provider,discoveryQuery(profile)).replace('/jobs-guest/jobs/api/seeMoreJobPostings/search','/jobs/search'):source.provider==='indeed'?publicSearchURL(source.provider,discoveryQuery(profile)):source.provider==='lever'?`https://jobs.lever.co/${source.slug}`:`https://job-boards.greenhouse.io/${source.slug}`})));
   }
   if (path === '/api/sources' && request.method === 'POST') {
     const source = await body(request);
     sourceURL(source);
     if (typeof source.company !== 'string' || !source.company.trim() || source.company.length > 100) throw new Error('Informe o nome da empresa.');
     const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM sources').first();
-    if (count.n >= 12) throw new Error('Limite pessoal de 12 fontes.');
+    if (count.n >= 16) throw new Error('Limite pessoal de 16 fontes.');
     await env.DB.prepare('INSERT INTO sources(provider,slug,company) VALUES(?,?,?)').bind(source.provider, source.slug, source.company.trim()).run();
     return json({ ok: true });
   }

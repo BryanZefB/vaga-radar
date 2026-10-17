@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { plain, eligibility, assess } from '../src/domain.js';
 import { linkedInCards, linkedInDetail, indeedCards, indeedDetail, jsonAssignment, discoveryQuery, publicSearchURL, publicDetailURL } from '../src/public-sources.js';
-import { filterJobs, hasSalary } from '../public/filters.js';
+import { filterJobs, hasSalary, groupJobs } from '../public/filters.js';
 
 test('full descriptions preserve paragraphs, decode encoded tags and never retain scripts',()=>{
   assert.equal(plain('&lt;p&gt;Requisitos&lt;/p&gt;&lt;ul&gt;&lt;li&gt;React &amp;amp; Node&lt;/li&gt;&lt;/ul&gt;'),'Requisitos\n\nReact & Node');
@@ -59,4 +59,11 @@ test('advanced filters distinguish publication, discovery, salary and verificati
   assert.deepEqual(filterJobs(jobs,{salary:true,provider:'lever',level:'pleno',status:'saved',verification:'confirmed'},now).map(x=>x.id),['2']);
   assert.equal(filterJobs(jobs,{skills:'React, Python'},now).length,0);
   assert.equal(hasSalary({currency:'BRL'}),false);
+});
+
+test('cross-posts sharing a specific job page group together while distinct roles and sources remain separate',()=>{
+  const job={id:'one',provider:'github',slug:'frontendbr/vagas',titleLevel:'pleno',description:'Página da vaga: https://empresa.com/carreiras/pleno/',url:'https://github.com/frontendbr/vagas/issues/1'};
+  const jobs=groupJobs([job,{...job,id:'two',slug:'backend-br/vagas',status:'saved'},{...job,id:'junior',titleLevel:'junior'},{...job,id:'official',provider:'gupy'}]);
+  assert.equal(jobs.length,3);assert.equal(jobs[0].relatedPosts.length,2);assert.equal(jobs[0].id,'two');assert.equal(jobs[0].status,'saved');
+  assert.equal(groupJobs([{...job,description:'Página da vaga: https://empresa.com/'},{...job,id:'different',description:'Página da vaga: https://empresa.com/'}]).length,2);
 });
