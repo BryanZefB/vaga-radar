@@ -10,7 +10,7 @@ const base = { id:'test', title:'Full-stack Developer Pleno', company:'Empresa t
 const source = { id:2, provider:'lever', slug:'cloudwalk', company:'CloudWalk' };
 function database() {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql','0002_bryan_profile.sql','0003_sync_lock.sql']) sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url),'utf8'));
+  for (const file of ['0001_init.sql','0002_bryan_profile.sql','0003_sync_lock.sql','0004_verified_source.sql']) sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url),'utf8'));
   const wrapper = {
     prepare(sql) {
       let args = [];

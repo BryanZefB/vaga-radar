@@ -53,7 +53,7 @@ O produto é acessado inteiramente no navegador após publicado. Os comandos aba
 1. Crie uma conta em https://dash.cloudflare.com/sign-up e mantenha **Workers Free**. Não contrate Workers Paid nem serviços pagos para esse projeto.
 2. No terminal do projeto, execute `npx wrangler login` e conclua o fluxo oficial no navegador. Nunca compartilhe senha ou token pelo chat.
 3. Execute `npx wrangler d1 create vaga-radar`. Copie somente o `database_id` retornado para o campo correspondente em `wrangler.jsonc`; mantenha o binding `DB`.
-4. Execute `npm run db:remote` para aplicar as três migrações na base nova. Não execute isso sobre uma base de outra aplicação.
+4. Execute `npm run db:remote` para aplicar as migrações na base nova. Não execute isso sobre uma base de outra aplicação.
 5. Execute `npm run deploy`. O Worker usa o endereço gratuito `workers.dev` atribuído pela Cloudflare. A API permanece bloqueada enquanto os segredos não estiverem configurados.
 6. Execute `npx wrangler secret put APP_PASSWORD` e digite uma senha forte de pelo menos 12 caracteres no terminal seguro. Execute `npx wrangler secret put SESSION_SECRET` e informe um valor aleatório de pelo menos 32 caracteres. Também é possível configurar os segredos nas configurações do Worker pelo painel e publicar a alteração. Não coloque esses valores no código ou em commits.
 7. Abra o endereço informado pela publicação, entre com a senha e clique em **Atualizar fontes**. Veja **Fontes de vagas**: valide cada empresa, o resultado da consulta e a data. Fontes que não existirem precisam ser substituídas por identificadores reais de páginas que você conhece.
@@ -88,3 +88,7 @@ Uma fonte pausada não é consultada e suas vagas saem do radar. O limite de oit
 `src/worker.js`: autenticação, API, cron e persistência. `src/domain.js`: normalização e regras de aderência. `public/`: interface sem bibliotecas externas. `migrations/`: banco e perfil inicial. `test/`: testes sem acesso externo. `wrangler.jsonc`: configuração de publicação. `package-lock.json`: dependências fixadas.
 
 O acervo `skills-bryan` permanece separado e sem alterações.
+
+## Atualização da preparação de publicação
+
+Com a rede liberada, a API pública Greenhouse da Wellhub (`gympass`) respondeu com 88 anúncios, dos quais 23 passaram pelo filtro estrito de Brasil e remoto na consulta de preparação. Isso confirma a leitura e normalização da fonte naquele momento, não uma publicação do sistema nem a aderência das 23 vagas ao perfil. A migração `0004_verified_source.sql` adiciona essa fonte e pausa a sugestão `truelogic`, que retornou HTTP 404. O acesso Cloudflare ainda precisa ser concedido pelo segredo seguro `CLOUDFLARE_API_TOKEN` para criar o D1 e publicar.
